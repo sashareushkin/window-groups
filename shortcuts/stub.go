@@ -16,6 +16,26 @@ type Shortcut struct {
 	Modifiers int
 }
 
+// Key constants (stub)
+const (
+	Key0 = 29
+	Key1 = 18
+	KeySpace = 49
+)
+
+// Modifier constants (stub)
+const (
+	ModCommand = 1
+	ModShift   = 2
+	ModOption  = 4
+	ModControl = 8
+)
+
+// String returns a human-readable string for the shortcut
+func (s Shortcut) String() string {
+	return "N/A"
+}
+
 // HotkeyManager is a stub for non-darwin platforms
 type HotkeyManager struct {
 	wm *window.Manager

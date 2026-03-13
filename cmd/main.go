@@ -26,7 +26,7 @@ func main() {
 	hm := shortcuts.NewHotkeyManager(wm)
 
 	// Initialize menu bar
-	menuBar := menu.NewMenuBar(wm)
+	_ = menu.NewMenuBar(wm)
 
 	// Register default hotkeys for existing groups
 	if err := registerDefaultHotkeys(hm, wm); err != nil {
