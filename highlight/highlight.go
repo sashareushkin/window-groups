@@ -4,6 +4,7 @@
 package highlight
 
 /*
+#cgo CFLAGS: -x objective-c -fobjc-arc
 #cgo LDFLAGS: -framework AppKit -framework Quartz
 
 #import <AppKit/AppKit.h>

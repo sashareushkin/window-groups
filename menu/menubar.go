@@ -4,6 +4,7 @@
 package menu
 
 /*
+#cgo CFLAGS: -x objective-c -fobjc-arc
 #cgo LDFLAGS: -framework AppKit -framework Foundation
 
 #import <AppKit/AppKit.h>
