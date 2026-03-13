@@ -1,3 +1,6 @@
+//go:build darwin
+// +build darwin
+
 package highlight
 
 /*
@@ -42,10 +45,8 @@ package highlight
 }
 
 - (void)highlightWindow:(CGWindowID)windowID {
-    // Remove existing highlight for this window
     [self.overlays removeObjectForKey:@(windowID)];
     
-    // Get window bounds
     CFArrayRef windowList = CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow, windowID);
     if (windowList == nil) return;
     
@@ -54,7 +55,6 @@ package highlight
     
     CGRect bounds = [boundsDict CGRectValue];
     
-    // Create overlay window
     NSWindow *overlay = [[NSWindow alloc] initWithContentRect:bounds
                                                    styleMask:NSWindowStyleMaskBorderless
                                                      backing:NSBackingStoreBuffered
@@ -65,7 +65,6 @@ package highlight
     overlay.ignoresMouseEvents = YES;
     overlay.hasShadow = NO;
     
-    // Add border layer
     CALayer *borderLayer = [CALayer layer];
     borderLayer.borderWidth = 3.0;
     borderLayer.borderColor = [[NSColor systemBlueColor] CGColor];
