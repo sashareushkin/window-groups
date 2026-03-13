@@ -1,5 +1,5 @@
-//go:build darwin && !fallback
-// +build darwin,!fallback
+//go:build darwin
+// +build darwin
 
 package menu
 
