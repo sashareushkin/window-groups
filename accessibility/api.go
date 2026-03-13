@@ -4,11 +4,63 @@
 package accessibility
 
 /*
-#cgo LDFLAGS: -framework ApplicationServices
+#cgo LDFLAGS: -framework ApplicationServices -framework CoreFoundation
 
 #include <ApplicationServices/ApplicationServices.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <stdlib.h>
+
+// AXError enum
+typedef enum {
+	kAXErrorSuccess = 0,
+	kAXErrorFailure = 1,
+	kAXErrorIllegalArgument = 2,
+	kAXErrorInvalidUIElement = 3,
+	kAXErrorInvalidUIElementObserver = 4,
+	kAXErrorCannotComplete = 5,
+	kAXErrorAttributeUnsupported = 6,
+	kAXErrorActionUnsupported = 7,
+	kAXErrorNotificationUnsupported = 8,
+	kAXErrorNotImplemented = 9,
+	kAXErrorNotificationAlreadyRegistered = 10,
+	kAXErrorNotificationNotRegistered = 11,
+	kAXErrorAPIDisabled = 12,
+	kAXErrorNoValue = 13,
+	kAXErrorParameterizedAttributeUnsupported = 14,
+	kAXErrorNotEnoughPrecision = 15
+} AXError;
+
+// AXValueType enum
+typedef enum {
+	kAXValueTypeUnknown = 0,
+	kAXValueTypeNumber = 1,
+	kAXValueTypePoint = 2,
+	kAXValueTypeSize = 3,
+	kAXValueTypeRect = 4,
+	kAXValueTypeRange = 5,
+	kAXValueTypeString = 6,
+	kAXValueTypeAttributedString = 7,
+	kAXValueTypeURL = 8,
+	kAXValueTypeDate = 9,
+	kAXValueTypeData = 10
+} AXValueType;
+
+// AX constants
+#define kAXFocusedApplicationAttribute "AXFocusedApplication"
+#define kAXFocusedWindowAttribute "AXFocusedWindow"
+#define kAXMinimizedAttribute "AXMinimized"
+#define kAXFullScreenAttribute "AXFullScreen"
+#define kAXPositionAttribute "AXPosition"
+#define kAXSizeAttribute "AXSize"
+#define kAXBundleIdentifierAttribute "AXBundleIdentifier"
+
+// CG constants
+#define kCGWindowNumber "kCGWindowNumber"
+#define kCGWindowOwnerName "kCGWindowOwnerName"
+#define kCGWindowOwnerPID "kCGWindowOwnerPID"
+#define kCGWindowBounds "kCGWindowBounds"
+#define kCGWindowLayer "kCGWindowLayer"
+#define kCGWindowName "kCGWindowName"
 
 // Check if we have accessibility permissions
 bool has_permissions() {
@@ -16,22 +68,16 @@ bool has_permissions() {
 }
 
 // Get windows using CGWindowList
-CFDictionaryRef* get_window_list(uint32_t options, uint32_t windowID, int *count) {
+CFArrayRef get_window_list(uint32_t options, uint32_t windowID, int *count) {
     CFArrayRef list = CGWindowListCopyWindowInfo(options, windowID);
     if (list == NULL) {
         *count = 0;
         return NULL;
     }
     
-    *count = CFArrayGetCount(list);
-    CFDictionaryRef **result = malloc(*count * sizeof(CFDictionaryRef*));
-    
-    for (int i = 0; i < *count; i++) {
-        result[i] = (CFDictionaryRef*)CFArrayGetValueAtIndex(list, i);
-    }
-    
-    CFRelease(list);
-    return result;
+    *count = (int)CFArrayGetCount(list);
+    CFRetain(list);
+    return list;
 }
 
 // Get integer value from dictionary
@@ -56,23 +102,28 @@ double get_double(CFDictionaryRef dict, CFStringRef key) {
     return result;
 }
 
-// Get string value from dictionary
+// Get string value from dictionary - returns allocated string
 char* get_string(CFDictionaryRef dict, CFStringRef key) {
     CFStringRef value;
     if (!CFDictionaryGetValueIfPresent(dict, key, (const void**)&value)) {
-        return "";
+        char *empty = malloc(1);
+        empty[0] = '\0';
+        return empty;
     }
     
-    char *result = malloc(1024);
-    if (CFStringGetCString(value, result, 1024, kCFStringEncodingUTF8)) {
+    CFIndex length = CFStringGetLength(value) + 1;
+    char *result = malloc(length);
+    if (CFStringGetCString(value, result, length, kCFStringEncodingUTF8)) {
         return result;
     }
     free(result);
-    return "";
+    char *empty = malloc(1);
+    empty[0] = '\0';
+    return empty;
 }
 
 // Get sub-dictionary
-void* get_dict(CFDictionaryRef dict, CFStringRef key) {
+CFDictionaryRef get_dict(CFDictionaryRef dict, CFStringRef key) {
     CFDictionaryRef value;
     if (!CFDictionaryGetValueIfPresent(dict, key, (const void**)&value)) {
         return NULL;
@@ -107,27 +158,22 @@ func GetWindows() ([]WindowInfo, error) {
 	if windowList == nil || count == 0 {
 		return []WindowInfo{}, nil
 	}
-	defer C.free(unsafe.Pointer(windowList))
+	defer C.CFRelease(C.CFTypeRef(windowList))
 
-	windows := make([]WindowInfo, 0, int(count))
-
-	// Get keys
-	kCGWindowNumber := C.CFStringCreateWithUTF8String(C.CFSTR("kCGWindowNumber"))
-	kCGWindowOwnerName := C.CFStringCreateWithUTF8String(C.CFSTR("kCGWindowOwnerName"))
-	kCGWindowOwnerPID := C.CFStringCreateWithUTF8String(C.CFSTR("kCGWindowOwnerPID"))
-	kCGWindowBounds := C.CFStringCreateWithUTF8String(C.CFSTR("kCGWindowBounds"))
-	kCGWindowLayer := C.CFStringCreateWithUTF8String(C.CFSTR("kCGWindowLayer"))
-	kCGWindowName := C.CFStringCreateWithUTF8String(C.CFSTR("kCGWindowName"))
-	kCGBoundsX := C.CFStringCreateWithUTF8String(C.CFSTR("X"))
-	kCGBoundsY := C.CFStringCreateWithUTF8String(C.CFSTR("Y"))
-	kCGBoundsWidth := C.CFStringCreateWithUTF8String(C.CFSTR("Width"))
-	kCGBoundsHeight := C.CFStringCreateWithUTF8String(C.CFSTR("Height"))
+	// Get keys - use CFSTR macro for constant strings
+	kCGWindowNumber := C.CFSTR("kCGWindowNumber")
+	kCGWindowOwnerName := C.CFSTR("kCGWindowOwnerName")
+	kCGWindowOwnerPID := C.CFSTR("kCGWindowOwnerPID")
+	kCGWindowBounds := C.CFSTR("kCGWindowBounds")
+	kCGWindowLayer := C.CFSTR("kCGWindowLayer")
+	kCGWindowName := C.CFSTR("kCGWindowName")
 
 	// Get active displays for monitor determination
 	displays, displayCount := GetDisplays()
 
 	for i := 0; i < int(count); i++ {
-		dict := windowList[i]
+		var dict C.CFDictionaryRef
+		CFArrayGetValueAtIndex(C.CFArrayRef(windowList), C.CFIndex(i), unsafe.Pointer(&dict))
 
 		// Get window layer (should be 0 for normal windows)
 		layer := C.get_int(dict, kCGWindowLayer)
@@ -142,10 +188,10 @@ func GetWindows() ([]WindowInfo, error) {
 		}
 
 		var bounds Rect
-		bounds.X = float64(C.get_double(boundsDict, kCGBoundsX))
-		bounds.Y = float64(C.get_double(boundsDict, kCGBoundsY))
-		bounds.Width = float64(C.get_double(boundsDict, kCGBoundsWidth))
-		bounds.Height = float64(C.get_double(boundsDict, kCGBoundsHeight))
+		bounds.X = float64(C.get_double(boundsDict, C.CFSTR("X")))
+		bounds.Y = float64(C.get_double(boundsDict, C.CFSTR("Y")))
+		bounds.Width = float64(C.get_double(boundsDict, C.CFSTR("Width")))
+		bounds.Height = float64(C.get_double(boundsDict, C.CFSTR("Height")))
 
 		// Skip very small windows
 		if bounds.Width < 50 || bounds.Height < 50 {
@@ -177,15 +223,15 @@ func GetWindows() ([]WindowInfo, error) {
 		isMinimized, isFullScreen := getWindowState(C.int32_t(pid), uint32(windowNumber))
 
 		windows = append(windows, WindowInfo{
-			Title:      windowName,
-			Bounds:     bounds,
-			BundleID:   bundleID,
-			AppName:    ownerName,
-			ProcessID:  int32(pid),
-			WindowID:   uint32(windowNumber),
-			DisplayID:  displayID,
-			IsMinimized: isMinimized,
-			IsFullScreen: isFullScreen,
+			Title:         windowName,
+			Bounds:        bounds,
+			BundleID:      bundleID,
+			AppName:       ownerName,
+			ProcessID:     int32(pid),
+			WindowID:      uint32(windowNumber),
+			DisplayID:     displayID,
+			IsMinimized:   isMinimized,
+			IsFullScreen:  isFullScreen,
 		})
 	}
 
@@ -195,26 +241,31 @@ func GetWindows() ([]WindowInfo, error) {
 // getBundleIDFromPID gets bundle ID from process ID
 func getBundleIDFromPID(pid C.int32_t) string {
 	app := C.AXUIElementCreateApplication(pid)
-	if app == nil {
+	if app == 0 {
 		return ""
 	}
-	defer C.release(unsafe.Pointer(app))
-
-	var appElement C.AXUIElement
-	result := C.AXUIElementCopyAttributeValue(app, C.kAXFocusedApplicationAttribute, (*C.AXValue)(unsafe.Pointer(&appElement)))
-	if result != C.AXError(0) {
-		return ""
-	}
-	defer C.release(unsafe.Pointer(appElement))
+	defer C.CFRelease(C.CFTypeRef(app))
 
 	var bundleIDRef C.CFTypeRef
-	result = C.AXUIElementCopyAttributeValue(appElement, C.kAXAXBundleIdentifierAttribute, &bundleIDRef)
-	if result != C.AXError(0) {
+	result := C.AXUIElementCopyAttributeValue(C.AXUIElement(app), C.CFSTR("AXFocusedApplication"), &bundleIDRef)
+	if result != C.AXError(kAXErrorSuccess) {
 		return ""
 	}
-	defer C.CFRelease(bundleIDRef)
+	if bundleIDRef != 0 {
+		defer C.CFRelease(bundleIDRef)
+	}
 
-	cfStr := C.CFStringRef(bundleIDRef)
+	// Get bundle ID from the application element
+	var bundleID C.CFTypeRef
+	result = C.AXUIElementCopyAttributeValue(C.AXUIElement(app), C.CFSTR("AXBundleIdentifier"), &bundleID)
+	if result != C.AXError(kAXErrorSuccess) {
+		return ""
+	}
+	if bundleID != 0 {
+		defer C.CFRelease(bundleID)
+	}
+
+	cfStr := C.CFStringRef(bundleID)
 	length := C.CFStringGetLength(cfStr)
 	if length == 0 {
 		return ""
@@ -230,36 +281,34 @@ func getBundleIDFromPID(pid C.int32_t) string {
 // getWindowState gets minimized and fullscreen state for a window
 func getWindowState(pid C.int32_t, windowID uint32) (isMinimized, isFullScreen bool) {
 	app := C.AXUIElementCreateApplication(pid)
-	if app == nil {
+	if app == 0 {
 		return false, false
 	}
-	defer C.release(unsafe.Pointer(app))
+	defer C.CFRelease(C.CFTypeRef(app))
 
 	// Get the focused window
 	var window C.AXUIElement
-	result := C.AXUIElementCopyAttributeValue(app, C.kAXFocusedWindowAttribute, (*C.AXValue)(unsafe.Pointer(&window)))
-	if result != C.AXError(0) {
+	result := C.AXUIElementCopyAttributeValue(C.AXUIElement(app), C.CFSTR("AXFocusedWindow"), (*C.AXValue)(unsafe.Pointer(&window)))
+	if result != C.AXError(kAXErrorSuccess) {
 		return false, false
 	}
-	defer C.release(unsafe.Pointer(window))
+	if window != 0 {
+		defer C.CFRelease(C.CFTypeRef(window))
+	}
 
 	// Check minimized state
 	var minimizedRef C.CFTypeRef
-	result = C.AXUIElementCopyAttributeValue(window, C.kAXMinimizedAttribute, &minimizedRef)
-	if result == C.AXError(0) && minimizedRef != nil {
-		if cfBool, ok := minimizedRef.(C.CFBooleanRef); ok {
-			isMinimized = C.CFBooleanGetValue(cfBool) != 0
-		}
+	result = C.AXUIElementCopyAttributeValue(C.AXUIElement(window), C.CFSTR("AXMinimized"), &minimizedRef)
+	if result == C.AXError(kAXErrorSuccess) && minimizedRef != 0 {
+		isMinimized = C.CFBooleanGetValue(C.CFBooleanRef(minimizedRef)) != 0
 		C.CFRelease(minimizedRef)
 	}
 
 	// Check full screen state
 	var fullScreenRef C.CFTypeRef
-	result = C.AXUIElementCopyAttributeValue(window, C.kAXFullScreenAttribute, &fullScreenRef)
-	if result == C.AXError(0) && fullScreenRef != nil {
-		if cfBool, ok := fullScreenRef.(C.CFBooleanRef); ok {
-			isFullScreen = C.CFBooleanGetValue(cfBool) != 0
-		}
+	result = C.AXUIElementCopyAttributeValue(C.AXUIElement(window), C.CFSTR("AXFullScreen"), &fullScreenRef)
+	if result == C.AXError(kAXErrorSuccess) && fullScreenRef != 0 {
+		isFullScreen = C.CFBooleanGetValue(C.CFBooleanRef(fullScreenRef)) != 0
 		C.CFRelease(fullScreenRef)
 	}
 
@@ -270,21 +319,21 @@ func getWindowState(pid C.int32_t, windowID uint32) (isMinimized, isFullScreen b
 func GetDisplays() ([]uint32, int) {
 	var displayCount C.uint32_t
 	var displays [16]C.CGDirectDisplayID
-	
+
 	result := C.CGGetActiveDisplayList(16, &displays[0], &displayCount)
 	if result != C.CGError(0) {
 		return []uint32{uint32(C.CGMainDisplayID())}, 1
 	}
-	
+
 	resultDisplays := make([]uint32, 0, int(displayCount))
 	for i := 0; i < int(displayCount); i++ {
 		resultDisplays = append(resultDisplays, uint32(displays[i]))
 	}
-	
+
 	if len(resultDisplays) == 0 {
 		return []uint32{uint32(C.CGMainDisplayID())}, 1
 	}
-	
+
 	return resultDisplays, int(displayCount)
 }
 
@@ -327,11 +376,11 @@ func GetDisplayInfo() ([]DisplayInfo, error) {
 	for _, displayID := range displays {
 		bounds := GetDisplayBounds(displayID)
 		isMain := displayID == uint32(C.CGMainDisplayID())
-		
+
 		result = append(result, DisplayInfo{
-			ID:       displayID,
-			Bounds:   bounds,
-			IsMain:   isMain,
+			ID:      displayID,
+			Bounds:  bounds,
+			IsMain:  isMain,
 		})
 	}
 
@@ -345,27 +394,29 @@ func SetWindowPosition(pid int32, windowID uint32, x, y float64) error {
 	}
 
 	app := C.AXUIElementCreateApplication(C.int32_t(pid))
-	if app == nil {
+	if app == 0 {
 		return fmt.Errorf("failed to create AXUIElement for pid %d", pid)
 	}
-	defer C.release(unsafe.Pointer(app))
+	defer C.CFRelease(C.CFTypeRef(app))
 
 	var window C.AXUIElement
-	result := C.AXUIElementCopyAttributeValue(app, C.kAXFocusedWindowAttribute, (*C.AXValue)(unsafe.Pointer(&window)))
-	if result != C.AXError(0) {
+	result := C.AXUIElementCopyAttributeValue(C.AXUIElement(app), C.CFSTR("AXFocusedWindow"), (*C.AXValue)(unsafe.Pointer(&window)))
+	if result != C.AXError(kAXErrorSuccess) {
 		return fmt.Errorf("failed to get focused window: %v", result)
 	}
-	defer C.release(unsafe.Pointer(window))
+	if window != 0 {
+		defer C.CFRelease(C.CFTypeRef(window))
+	}
 
 	position := C.CGPoint{X: C.CGFloat(x), Y: C.CGFloat(y)}
-	positionValue := C.CAXValueCreate(C.kAXValueTypeCGPoint, unsafe.Pointer(&position))
-	if positionValue == nil {
+	positionValue := C.AXValueCreate(C.enum_AXValueType(kAXValueTypePoint), unsafe.Pointer(&position))
+	if positionValue == 0 {
 		return errors.New("failed to create position value")
 	}
-	defer C.CFRelease(unsafe.Pointer(positionValue))
+	defer C.CFRelease(C.CFTypeRef(positionValue))
 
-	setResult := C.AXUIElementSetAttributeValue(window, C.kAXPositionAttribute, C.CFTypeRef(positionValue))
-	if setResult != C.AXError(0) {
+	setResult := C.AXUIElementSetAttributeValue(C.AXUIElement(window), C.CFSTR("AXPosition"), C.CFTypeRef(positionValue))
+	if setResult != C.AXError(kAXErrorSuccess) {
 		return fmt.Errorf("failed to set position: %v", setResult)
 	}
 
@@ -379,27 +430,29 @@ func SetWindowSize(pid int32, windowID uint32, width, height float64) error {
 	}
 
 	app := C.AXUIElementCreateApplication(C.int32_t(pid))
-	if app == nil {
+	if app == 0 {
 		return fmt.Errorf("failed to create AXUIElement for pid %d", pid)
 	}
-	defer C.release(unsafe.Pointer(app))
+	defer C.CFRelease(C.CFTypeRef(app))
 
 	var window C.AXUIElement
-	result := C.AXUIElementCopyAttributeValue(app, C.kAXFocusedWindowAttribute, (*C.AXValue)(unsafe.Pointer(&window)))
-	if result != C.AXError(0) {
+	result := C.AXUIElementCopyAttributeValue(C.AXUIElement(app), C.CFSTR("AXFocusedWindow"), (*C.AXValue)(unsafe.Pointer(&window)))
+	if result != C.AXError(kAXErrorSuccess) {
 		return fmt.Errorf("failed to get focused window: %v", result)
 	}
-	defer C.release(unsafe.Pointer(window))
+	if window != 0 {
+		defer C.CFRelease(C.CFTypeRef(window))
+	}
 
 	size := C.CGSize{Width: C.CGFloat(width), Height: C.CGFloat(height)}
-	sizeValue := C.CAXValueCreate(C.kAXValueTypeCGSize, unsafe.Pointer(&size))
-	if sizeValue == nil {
+	sizeValue := C.AXValueCreate(C.enum_AXValueType(kAXValueTypeSize), unsafe.Pointer(&size))
+	if sizeValue == 0 {
 		return errors.New("failed to create size value")
 	}
-	defer C.CFRelease(unsafe.Pointer(sizeValue))
+	defer C.CFRelease(C.CFTypeRef(sizeValue))
 
-	setResult := C.AXUIElementSetAttributeValue(window, C.kAXSizeAttribute, C.CFTypeRef(sizeValue))
-	if setResult != C.AXError(0) {
+	setResult := C.AXUIElementSetAttributeValue(C.AXUIElement(window), C.CFSTR("AXSize"), C.CFTypeRef(sizeValue))
+	if setResult != C.AXError(kAXErrorSuccess) {
 		return fmt.Errorf("failed to set size: %v", setResult)
 	}
 
@@ -421,23 +474,22 @@ func MinimizeWindow(pid int32, windowID uint32) error {
 	}
 
 	app := C.AXUIElementCreateApplication(C.int32_t(pid))
-	if app == nil {
+	if app == 0 {
 		return fmt.Errorf("failed to create AXUIElement for pid %d", pid)
 	}
-	defer C.release(unsafe.Pointer(app))
+	defer C.CFRelease(C.CFTypeRef(app))
 
 	var window C.AXUIElement
-	result := C.AXUIElementCopyAttributeValue(app, C.kAXFocusedWindowAttribute, (*C.AXValue)(unsafe.Pointer(&window)))
-	if result != C.AXError(0) {
+	result := C.AXUIElementCopyAttributeValue(C.AXUIElement(app), C.CFSTR("AXFocusedWindow"), (*C.AXValue)(unsafe.Pointer(&window)))
+	if result != C.AXError(kAXErrorSuccess) {
 		return fmt.Errorf("failed to get focused window: %v", result)
 	}
-	defer C.release(unsafe.Pointer(window))
+	if window != 0 {
+		defer C.CFRelease(C.CFTypeRef(window))
+	}
 
-	minimized := C.CFBooleanCreate(C.kCFBooleanTrue)
-	defer C.CFRelease(unsafe.Pointer(minimized))
-
-	setResult := C.AXUIElementSetAttributeValue(window, C.kAXMinimizedAttribute, C.CFTypeRef(minimized))
-	if setResult != C.AXError(0) {
+	setResult := C.AXUIElementSetAttributeValue(C.AXUIElement(window), C.CFSTR("AXMinimized"), C.CFTypeRef(C.kCFBooleanTrue))
+	if setResult != C.AXError(kAXErrorSuccess) {
 		return fmt.Errorf("failed to minimize window: %v", setResult)
 	}
 
@@ -451,23 +503,22 @@ func UnminimizeWindow(pid int32, windowID uint32) error {
 	}
 
 	app := C.AXUIElementCreateApplication(C.int32_t(pid))
-	if app == nil {
+	if app == 0 {
 		return fmt.Errorf("failed to create AXUIElement for pid %d", pid)
 	}
-	defer C.release(unsafe.Pointer(app))
+	defer C.CFRelease(C.CFTypeRef(app))
 
 	var window C.AXUIElement
-	result := C.AXUIElementCopyAttributeValue(app, C.kAXFocusedWindowAttribute, (*C.AXValue)(unsafe.Pointer(&window)))
-	if result != C.AXError(0) {
+	result := C.AXUIElementCopyAttributeValue(C.AXUIElement(app), C.CFSTR("AXFocusedWindow"), (*C.AXValue)(unsafe.Pointer(&window)))
+	if result != C.AXError(kAXErrorSuccess) {
 		return fmt.Errorf("failed to get focused window: %v", result)
 	}
-	defer C.release(unsafe.Pointer(window))
+	if window != 0 {
+		defer C.CFRelease(C.CFTypeRef(window))
+	}
 
-	notMinimized := C.CFBooleanCreate(C.kCFBooleanFalse)
-	defer C.CFRelease(unsafe.Pointer(notMinimized))
-
-	setResult := C.AXUIElementSetAttributeValue(window, C.kAXMinimizedAttribute, C.CFTypeRef(notMinimized))
-	if setResult != C.AXError(0) {
+	setResult := C.AXUIElementSetAttributeValue(C.AXUIElement(window), C.CFSTR("AXMinimized"), C.CFTypeRef(C.kCFBooleanFalse))
+	if setResult != C.AXError(kAXErrorSuccess) {
 		return fmt.Errorf("failed to unminimize window: %v", setResult)
 	}
 
@@ -481,28 +532,29 @@ func SetFullScreen(pid int32, windowID uint32, fullscreen bool) error {
 	}
 
 	app := C.AXUIElementCreateApplication(C.int32_t(pid))
-	if app == nil {
+	if app == 0 {
 		return fmt.Errorf("failed to create AXUIElement for pid %d", pid)
 	}
-	defer C.release(unsafe.Pointer(app))
+	defer C.CFRelease(C.CFTypeRef(app))
 
 	var window C.AXUIElement
-	result := C.AXUIElementCopyAttributeValue(app, C.kAXFocusedWindowAttribute, (*C.AXValue)(unsafe.Pointer(&window)))
-	if result != C.AXError(0) {
+	result := C.AXUIElementCopyAttributeValue(C.AXUIElement(app), C.CFSTR("AXFocusedWindow"), (*C.AXValue)(unsafe.Pointer(&window)))
+	if result != C.AXError(kAXErrorSuccess) {
 		return fmt.Errorf("failed to get focused window: %v", result)
 	}
-	defer C.release(unsafe.Pointer(window))
+	if window != 0 {
+		defer C.CFRelease(C.CFTypeRef(window))
+	}
 
 	var fsValue C.CFBooleanRef
 	if fullscreen {
-		fsValue = C.CFBooleanCreate(C.kCFBooleanTrue)
+		fsValue = C.kCFBooleanTrue
 	} else {
-		fsValue = C.CFBooleanCreate(C.kCFBooleanFalse)
+		fsValue = C.kCFBooleanFalse
 	}
-	defer C.CFRelease(unsafe.Pointer(fsValue))
 
-	setResult := C.AXUIElementSetAttributeValue(window, C.kAXFullScreenAttribute, C.CFTypeRef(fsValue))
-	if setResult != C.AXError(0) {
+	setResult := C.AXUIElementSetAttributeValue(C.AXUIElement(window), C.CFSTR("AXFullScreen"), C.CFTypeRef(fsValue))
+	if setResult != C.AXError(kAXErrorSuccess) {
 		return fmt.Errorf("failed to set fullscreen: %v", setResult)
 	}
 
