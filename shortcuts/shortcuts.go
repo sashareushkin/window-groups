@@ -1,5 +1,5 @@
-//go:build darwin
-// +build darwin
+//go:build darwin && !fallback
+// +build darwin,!fallback
 
 package shortcuts
 

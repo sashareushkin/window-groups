@@ -30,9 +30,9 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 1
+          CGO_ENABLED: 0
         run: |
-          go build -o window-groups-${GOOS}-${GOARCH} ./cmd/main.go
+          go build -tags fallback -o window-groups-${GOOS}-${GOARCH} ./cmd/main.go
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
