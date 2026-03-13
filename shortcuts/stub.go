@@ -9,6 +9,13 @@ import (
 	"window-groups/window"
 )
 
+// Shortcut represents a keyboard shortcut
+type Shortcut struct {
+	GroupName string
+	KeyCode   int
+	Modifiers int
+}
+
 // HotkeyManager is a stub for non-darwin platforms
 type HotkeyManager struct {
 	wm *window.Manager
