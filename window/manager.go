@@ -327,10 +327,10 @@ func (m *Manager) UpdateGroupWindows(groupID string) error {
 	for i := range group.Windows {
 		for _, w := range windows {
 			if w.BundleID == group.Windows[i].BundleID {
-				group.Windows[i].X = w.Bounds.X
-				group.Windows[i].Y = w.Bounds.Y
-				group.Windows[i].Width = w.Bounds.Width
-				group.Windows[i].Height = w.Bounds.Height
+				group.Windows[i].X = w.X
+				group.Windows[i].Y = w.Y
+				group.Windows[i].Width = w.Width
+				group.Windows[i].Height = w.Height
 				break
 			}
 		}
