@@ -4,6 +4,7 @@
 package shortcuts
 
 /*
+#cgo CFLAGS: -x objective-c
 #cgo LDFLAGS: -framework AppKit -framework Foundation -framework Carbon
 
 #import <AppKit/AppKit.h>
