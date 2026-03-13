@@ -50,7 +50,6 @@ import "C"
 
 import (
 	"fmt"
-	"unsafe"
 
 	"window-groups/window"
 )
