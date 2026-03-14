@@ -5,7 +5,7 @@ package menu
 
 /*
 #cgo CFLAGS: -x objective-c -fobjc-arc
-#cgo LDFLAGS: -framework AppKit -framework Foundation
+#cgo LDFLAGS: -framework AppKit -framework Foundation -framework Quartz
 
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
@@ -17,6 +17,8 @@ extern void go_menu_restore_group(uintptr_t handle, char *groupName);
 extern void go_menu_delete_group(uintptr_t handle, char *groupName);
 extern void go_menu_quit(uintptr_t handle);
 extern void go_menu_add_frontmost(uintptr_t handle, char *bundleID);
+extern int go_menu_toggle_window(uintptr_t handle, uint32_t windowID, char *bundleID);
+extern void go_menu_cancel_selection(uintptr_t handle);
 
 void init_appkit() {
     [NSApplication sharedApplication];
@@ -34,8 +36,9 @@ void run_appkit() {
 @property (nonatomic, strong) NSStatusItem *statusItem;
 @property (nonatomic, strong) NSMenu *menu;
 @property (nonatomic, assign) BOOL isSelectingWindows;
-@property (nonatomic, strong) NSMutableArray *selectedWindows;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber*, NSString*> *selectedWindows;
 @property (nonatomic, strong) NSMutableArray *groupNames;
+@property (nonatomic, strong) id globalMonitor;
 @end
 
 @implementation MenuController
@@ -46,8 +49,9 @@ void run_appkit() {
         _statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
         _menu = [[NSMenu alloc] init];
         _isSelectingWindows = NO;
-        _selectedWindows = [[NSMutableArray alloc] init];
+        _selectedWindows = [[NSMutableDictionary alloc] init];
         _groupNames = [[NSMutableArray alloc] init];
+        _globalMonitor = nil;
         
         // Setup status item
         if (_statusItem.button) {
@@ -67,6 +71,94 @@ void run_appkit() {
         [_groupNames addObjectsFromArray:groups];
     }
     [self rebuildMenu];
+}
+
+- (NSDictionary *)topWindowUnderMouse {
+    NSPoint point = [NSEvent mouseLocation];
+    CFArrayRef windowsRef = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+    if (windowsRef == NULL) {
+        return nil;
+    }
+
+    NSArray *windows = (__bridge_transfer NSArray *)windowsRef;
+    for (NSDictionary *info in windows) {
+        NSNumber *layer = info[(NSString *)kCGWindowLayer];
+        if (layer && layer.intValue != 0) {
+            continue;
+        }
+
+        NSDictionary *boundsDict = info[(NSString *)kCGWindowBounds];
+        if (!boundsDict) {
+            continue;
+        }
+
+        CGRect bounds = CGRectZero;
+        if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)boundsDict, &bounds)) {
+            continue;
+        }
+
+        if (!CGRectContainsPoint(bounds, CGPointMake(point.x, point.y))) {
+            continue;
+        }
+
+        return info;
+    }
+
+    return nil;
+}
+
+- (void)startSelectionMonitor {
+    if (self.globalMonitor != nil) {
+        return;
+    }
+
+    __weak typeof(self) weakSelf = self;
+    self.globalMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown handler:^(NSEvent *event) {
+        __strong typeof(weakSelf) selfStrong = weakSelf;
+        if (!selfStrong || !selfStrong.isSelectingWindows || selfStrong.goHandle == 0) {
+            return;
+        }
+
+        if ((event.modifierFlags & NSEventModifierFlagOption) == 0) {
+            return;
+        }
+
+        NSDictionary *windowInfo = [selfStrong topWindowUnderMouse];
+        if (!windowInfo) {
+            return;
+        }
+
+        NSNumber *windowNumber = windowInfo[(NSString *)kCGWindowNumber];
+        NSNumber *pidNumber = windowInfo[(NSString *)kCGWindowOwnerPID];
+        if (!windowNumber || !pidNumber) {
+            return;
+        }
+
+        NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:(pid_t)pidNumber.intValue];
+        NSString *bundle = app.bundleIdentifier;
+        if (!bundle || bundle.length == 0) {
+            return;
+        }
+
+        int selected = go_menu_toggle_window(selfStrong.goHandle, (uint32_t)windowNumber.unsignedIntValue, (char *)bundle.UTF8String);
+        NSNumber *key = @((uint32_t)windowNumber.unsignedIntValue);
+        if (selected != 0) {
+            selfStrong.selectedWindows[key] = bundle;
+        } else {
+            [selfStrong.selectedWindows removeObjectForKey:key];
+        }
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [selfStrong rebuildMenu];
+        });
+    }];
+}
+
+- (void)stopSelectionMonitor {
+    if (self.globalMonitor != nil) {
+        [NSEvent removeMonitor:self.globalMonitor];
+        self.globalMonitor = nil;
+    }
 }
 
 - (void)rebuildMenu {
@@ -133,11 +225,13 @@ void run_appkit() {
 
         if (_selectedWindows.count > 0) {
             [_menu addItem:[NSMenuItem separatorItem]];
-            NSMenuItem *selectedHeader = [[NSMenuItem alloc] initWithTitle:@"Selected apps" action:nil keyEquivalent:@""];
+            NSMenuItem *selectedHeader = [[NSMenuItem alloc] initWithTitle:@"Selected windows (Option+Click)" action:nil keyEquivalent:@""];
             selectedHeader.enabled = NO;
             [_menu addItem:selectedHeader];
-            for (NSString *bundle in _selectedWindows) {
-                NSMenuItem *b = [[NSMenuItem alloc] initWithTitle:bundle action:nil keyEquivalent:@""];
+            for (NSNumber *windowID in _selectedWindows) {
+                NSString *bundle = _selectedWindows[windowID];
+                NSString *title = [NSString stringWithFormat:@"%@ (#%@)", bundle, windowID];
+                NSMenuItem *b = [[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
                 b.enabled = NO;
                 [_menu addItem:b];
             }
@@ -182,9 +276,14 @@ void run_appkit() {
     } else {
         _isSelectingWindows = !_isSelectingWindows;
     }
-    if (!_isSelectingWindows) {
+
+    if (_isSelectingWindows) {
+        [self startSelectionMonitor];
+    } else {
+        [self stopSelectionMonitor];
         [_selectedWindows removeAllObjects];
     }
+
     [self rebuildMenu];
 }
 
@@ -195,18 +294,22 @@ void run_appkit() {
         return;
     }
 
-    if (![_selectedWindows containsObject:bundle]) {
-        [_selectedWindows addObject:bundle];
-        if (_goHandle != 0) {
-            go_menu_add_frontmost(_goHandle, (char *)[bundle UTF8String]);
-        }
+    NSNumber *fakeID = @((uint32_t)(100000 + _selectedWindows.count + 1));
+    _selectedWindows[fakeID] = bundle;
+    if (_goHandle != 0) {
+        go_menu_add_frontmost(_goHandle, (char *)[bundle UTF8String]);
     }
+
     [self rebuildMenu];
 }
 
 - (void)cancelSelection:(id)sender {
     _isSelectingWindows = NO;
+    [self stopSelectionMonitor];
     [_selectedWindows removeAllObjects];
+    if (_goHandle != 0) {
+        go_menu_cancel_selection(_goHandle);
+    }
     [self rebuildMenu];
 }
 
@@ -246,6 +349,7 @@ void update_menu_groups(void *controller, char **groups, int count) {
 void destroy_menu_controller(void *controller) {
     if (controller) {
         MenuController *c = (__bridge_transfer MenuController *)controller;
+        [c stopSelectionMonitor];
         [[NSStatusBar systemStatusBar] removeStatusItem:c.statusItem];
     }
 }
@@ -257,8 +361,8 @@ import (
 	"runtime/cgo"
 	"unsafe"
 
-	"window-groups/accessibility"
 	"window-groups/highlight"
+	"window-groups/shortcuts"
 	"window-groups/window"
 )
 
@@ -307,6 +411,7 @@ func (m *MenuController) Destroy() {
 // MenuBar represents the menu bar UI
 type MenuBar struct {
 	wm              *window.Manager
+	hm              *shortcuts.HotkeyManager
 	controller      *MenuController
 	highlighter     *highlight.Manager
 	handle          cgo.Handle
@@ -315,12 +420,12 @@ type MenuBar struct {
 }
 
 // NewMenuBar creates a new menu bar
-func NewMenuBar(wm *window.Manager) *MenuBar {
+func NewMenuBar(wm *window.Manager, hm *shortcuts.HotkeyManager) *MenuBar {
 	mb := &MenuBar{
 		wm:              wm,
+		hm:              hm,
 		controller:      NewMenuController(),
-		// временно отключено: нестабильный cgo highlight приводил к SIGSEGV на macOS
-		highlighter:     nil,
+		highlighter:     highlight.NewManager(),
 		selectedWindows: make(map[uint32]string),
 	}
 	if mb.controller == nil {
@@ -353,6 +458,23 @@ func (m *MenuBar) refreshMenu() {
 		names[i] = g.Name
 	}
 	m.controller.UpdateGroups(names)
+	m.syncSlotHotkeys()
+}
+
+func (m *MenuBar) syncSlotHotkeys() {
+	if m.hm == nil {
+		return
+	}
+	m.hm.ClearAllShortcuts()
+	defaultKeys := []int{shortcuts.Key1, shortcuts.Key2, shortcuts.Key3, shortcuts.Key4, shortcuts.Key5, shortcuts.Key6, shortcuts.Key7, shortcuts.Key8, shortcuts.Key9, shortcuts.Key0}
+	for i, group := range m.wm.GetGroups() {
+		if i >= len(defaultKeys) {
+			break
+		}
+		if err := m.hm.RegisterShortcut(group.Name, defaultKeys[i], shortcuts.ModCommand|shortcuts.ModOption|shortcuts.ModControl); err != nil {
+			fmt.Printf("Warning: Could not register hotkey for slot %d (%s): %v\n", i+1, group.Name, err)
+		}
+	}
 }
 
 // StartWindowSelection starts the window selection mode
@@ -368,7 +490,7 @@ func (m *MenuBar) StartWindowSelection() error {
 	}
 
 	fmt.Println("Window selection mode started")
-	fmt.Println("Click on windows to add them to the group")
+	fmt.Println("Use Option + Left Click to toggle windows")
 
 	return nil
 }
@@ -423,29 +545,19 @@ func (m *MenuBar) RemoveSelectedWindow(windowID uint32) {
 }
 
 // ToggleWindowSelection toggles a window in selection
-func (m *MenuBar) ToggleWindowSelection(windowID uint32, bundleID string) {
+func (m *MenuBar) ToggleWindowSelection(windowID uint32, bundleID string) bool {
 	if _, exists := m.selectedWindows[windowID]; exists {
 		m.RemoveSelectedWindow(windowID)
-	} else {
-		m.AddSelectedWindow(windowID, bundleID)
+		return false
 	}
+	m.AddSelectedWindow(windowID, bundleID)
+	return true
 }
 
 // SaveGroup saves the selected windows as a group
 func (m *MenuBar) SaveGroup() (string, error) {
 	if !m.isSelecting {
 		return "", fmt.Errorf("not in selection mode")
-	}
-
-	// Fallback: if interactive selection is empty, capture all currently visible windows.
-	if len(m.selectedWindows) == 0 {
-		if windows, err := accessibility.GetWindows(); err == nil {
-			for _, w := range windows {
-				if w.BundleID != "" {
-					m.selectedWindows[w.WindowID] = w.BundleID
-				}
-			}
-		}
 	}
 
 	if len(m.selectedWindows) == 0 {
@@ -463,8 +575,8 @@ func (m *MenuBar) SaveGroup() (string, error) {
 		bundleIDs = append(bundleIDs, bid)
 	}
 
-	// Generate auto-name based on group size
-	name := generateGroupName(len(bundleIDs))
+	// Assign first free slot name: Group 1..10
+	name := m.nextGroupName()
 
 	// Clear highlights
 	if m.highlighter != nil {
@@ -576,27 +688,16 @@ func (m *MenuBar) Destroy() {
 	}
 }
 
-// generateGroupName generates a city-based name for the group
-func generateGroupName(windowCount int) string {
-	cities := []string{
-		"Village",    // 1-2 windows
-		"Town",       // 3-4 windows
-		"City",       // 5-6 windows
-		"Metropolis", // 7-9 windows
-		"Megacity",   // 10+ windows
+func (m *MenuBar) nextGroupName() string {
+	used := make(map[string]bool)
+	for _, g := range m.wm.GetGroups() {
+		used[g.Name] = true
 	}
-
-	if windowCount <= 2 {
-		return cities[0]
+	for i := 1; i <= 10; i++ {
+		name := fmt.Sprintf("Group %d", i)
+		if !used[name] {
+			return name
+		}
 	}
-	if windowCount <= 4 {
-		return cities[1]
-	}
-	if windowCount <= 6 {
-		return cities[2]
-	}
-	if windowCount <= 9 {
-		return cities[3]
-	}
-	return cities[4]
+	return fmt.Sprintf("Group %d", len(m.wm.GetGroups())+1)
 }

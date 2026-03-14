@@ -6,6 +6,7 @@ package menu
 import (
 	"fmt"
 
+	"window-groups/shortcuts"
 	"window-groups/window"
 )
 
@@ -15,7 +16,8 @@ type MenuBar struct {
 }
 
 // NewMenuBar creates a stub menu bar (no-op on non-darwin)
-func NewMenuBar(wm *window.Manager) *MenuBar {
+func NewMenuBar(wm *window.Manager, hm *shortcuts.HotkeyManager) *MenuBar {
+	_ = hm
 	fmt.Println("Note: Menu bar UI is only available on macOS")
 	return &MenuBar{wm: wm}
 }
@@ -37,7 +39,9 @@ func (m *MenuBar) AddSelectedWindow(windowID uint32, bundleID string) {}
 func (m *MenuBar) RemoveSelectedWindow(windowID uint32) {}
 
 // ToggleWindowSelection is a stub
-func (m *MenuBar) ToggleWindowSelection(windowID uint32, bundleID string) {}
+func (m *MenuBar) ToggleWindowSelection(windowID uint32, bundleID string) bool {
+	return false
+}
 
 // SaveGroup is a stub
 func (m *MenuBar) SaveGroup() (string, error) {

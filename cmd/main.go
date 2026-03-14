@@ -30,7 +30,7 @@ func main() {
 	hm := shortcuts.NewHotkeyManager(wm)
 
 	// Initialize menu bar
-	mb := menu.NewMenuBar(wm)
+	mb := menu.NewMenuBar(wm, hm)
 	if mb == nil {
 		fmt.Println("Failed to initialize menu bar")
 		os.Exit(1)
@@ -56,23 +56,19 @@ func main() {
 }
 
 func registerDefaultHotkeys(hm *shortcuts.HotkeyManager, wm *window.Manager) error {
+	hm.ClearAllShortcuts()
 	groups := wm.GetGroups()
-	
-	// Default hotkeys: ⌃⌥⌘1..9,0 to reduce conflicts with app shortcuts.
+
+	// Slot hotkeys: Ctrl+Option+Cmd+1..0
 	defaultKeys := []int{shortcuts.Key1, shortcuts.Key2, shortcuts.Key3, shortcuts.Key4, shortcuts.Key5, shortcuts.Key6, shortcuts.Key7, shortcuts.Key8, shortcuts.Key9, shortcuts.Key0}
 	for i, group := range groups {
 		if i >= len(defaultKeys) {
 			break
 		}
-
-		keyCode := defaultKeys[i]
-		modifiers := shortcuts.ModCommand | shortcuts.ModOption | shortcuts.ModControl
-
-		if err := hm.RegisterShortcut(group.Name, keyCode, modifiers); err != nil {
+		if err := hm.RegisterShortcut(group.Name, defaultKeys[i], shortcuts.ModCommand|shortcuts.ModOption|shortcuts.ModControl); err != nil {
 			fmt.Printf("Warning: Could not register hotkey for %s: %v\n", group.Name, err)
 		}
 	}
-	
 	return nil
 }
 

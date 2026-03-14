@@ -25,6 +25,10 @@ func go_menu_toggle_create(handle C.uintptr_t) C.int {
 	if mb.IsSelecting() {
 		if name, err := mb.SaveGroup(); err != nil {
 			fmt.Printf("Save group failed: %v\n", err)
+			if err.Error() == "group limit reached: maximum 10 groups" {
+				fmt.Println("Cannot create more than 10 groups")
+			}
+			return 1
 		} else {
 			fmt.Printf("Group saved: %s\n", name)
 		}
@@ -72,6 +76,30 @@ func go_menu_add_frontmost(handle C.uintptr_t, bundleID *C.char) {
 		return
 	}
 	mb.AddSelectedBundle(C.GoString(bundleID))
+}
+
+//export go_menu_toggle_window
+func go_menu_toggle_window(handle C.uintptr_t, windowID C.uint, bundleID *C.char) C.int {
+	h := cgo.Handle(handle)
+	mb, ok := h.Value().(*MenuBar)
+	if !ok || mb == nil || bundleID == nil {
+		return 0
+	}
+	selected := mb.ToggleWindowSelection(uint32(windowID), C.GoString(bundleID))
+	if selected {
+		return 1
+	}
+	return 0
+}
+
+//export go_menu_cancel_selection
+func go_menu_cancel_selection(handle C.uintptr_t) {
+	h := cgo.Handle(handle)
+	mb, ok := h.Value().(*MenuBar)
+	if !ok || mb == nil {
+		return
+	}
+	mb.CancelSelection()
 }
 
 //export go_menu_quit

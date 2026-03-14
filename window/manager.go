@@ -128,6 +128,10 @@ func (m *Manager) CaptureWindows() ([]Window, error) {
 
 // CreateGroup creates a new window group from bundle IDs with current window positions
 func (m *Manager) CreateGroup(name string, bundleIDs []string) (*Group, error) {
+	if len(m.groups) >= 10 {
+		return nil, fmt.Errorf("group limit reached: maximum 10 groups")
+	}
+
 	// Capture current windows first
 	windows, err := m.CaptureWindows()
 	if err != nil {
@@ -277,10 +281,20 @@ func (m *Manager) GetGroups() []Group {
 	return m.groups
 }
 
-// GetGroup returns a specific group
+// GetGroup returns a specific group by ID
 func (m *Manager) GetGroup(id string) *Group {
 	for _, g := range m.groups {
 		if g.ID == id {
+			return &g
+		}
+	}
+	return nil
+}
+
+// GetGroupByName returns a specific group by name
+func (m *Manager) GetGroupByName(name string) *Group {
+	for _, g := range m.groups {
+		if g.Name == name {
 			return &g
 		}
 	}

@@ -138,7 +138,7 @@ func (m *HotkeyManager) RegisterShortcut(groupName string, keyCode int, modifier
 		return fmt.Errorf("window manager not set")
 	}
 
-	group := m.wm.GetGroup(groupName)
+	group := m.wm.GetGroupByName(groupName)
 	if group == nil {
 		return fmt.Errorf("group not found: %s", groupName)
 	}
@@ -185,6 +185,15 @@ func (m *HotkeyManager) HandleHotkey(hotkeyID int) {
 		return
 	}
 	m.RestoreGroup(sc.GroupName)
+}
+
+// ClearAllShortcuts unregisters all registered shortcuts
+func (m *HotkeyManager) ClearAllShortcuts() {
+	for id := range m.shortcuts {
+		C.unregister_hotkey(C.UInt32(id))
+	}
+	m.shortcuts = make(map[int]Shortcut)
+	m.nextHotkeyID = 1
 }
 
 // GetShortcuts returns all registered shortcuts
