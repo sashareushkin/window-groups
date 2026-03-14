@@ -276,7 +276,8 @@ func NewMenuBar(wm *window.Manager) *MenuBar {
 	mb := &MenuBar{
 		wm:              wm,
 		controller:      NewMenuController(),
-		highlighter:     highlight.NewManager(),
+		// временно отключено: нестабильный cgo highlight приводил к SIGSEGV на macOS
+		highlighter:     nil,
 		selectedWindows: make(map[uint32]string),
 	}
 	if mb.controller == nil {
@@ -319,7 +320,9 @@ func (m *MenuBar) StartWindowSelection() error {
 
 	m.isSelecting = true
 	m.selectedWindows = make(map[uint32]string)
-	m.highlighter.ClearAllHighlights()
+	if m.highlighter != nil {
+		m.highlighter.ClearAllHighlights()
+	}
 
 	fmt.Println("Window selection mode started")
 	fmt.Println("Click on windows to add them to the group")
@@ -339,7 +342,9 @@ func (m *MenuBar) AddSelectedWindow(windowID uint32, bundleID string) {
 	}
 
 	m.selectedWindows[windowID] = bundleID
-	m.highlighter.HighlightWindow(windowID)
+	if m.highlighter != nil {
+		m.highlighter.HighlightWindow(windowID)
+	}
 
 	fmt.Printf("Added window %d: %s (total: %d)\n", windowID, bundleID, len(m.selectedWindows))
 }
@@ -352,7 +357,9 @@ func (m *MenuBar) RemoveSelectedWindow(windowID uint32) {
 
 	if _, exists := m.selectedWindows[windowID]; exists {
 		delete(m.selectedWindows, windowID)
-		m.highlighter.RemoveHighlight(windowID)
+		if m.highlighter != nil {
+			m.highlighter.RemoveHighlight(windowID)
+		}
 		fmt.Printf("Removed window %d (total: %d)\n", windowID, len(m.selectedWindows))
 	}
 }
@@ -402,7 +409,9 @@ func (m *MenuBar) SaveGroup() (string, error) {
 	name := generateGroupName(len(bundleIDs))
 
 	// Clear highlights
-	m.highlighter.ClearAllHighlights()
+	if m.highlighter != nil {
+		m.highlighter.ClearAllHighlights()
+	}
 
 	// Create group via window manager (captures current positions)
 	group, err := m.wm.CreateGroup(name, bundleIDs)
@@ -424,7 +433,9 @@ func (m *MenuBar) SaveGroup() (string, error) {
 
 // CancelSelection cancels the current selection
 func (m *MenuBar) CancelSelection() {
-	m.highlighter.ClearAllHighlights()
+	if m.highlighter != nil {
+		m.highlighter.ClearAllHighlights()
+	}
 	m.isSelecting = false
 	m.selectedWindows = make(map[uint32]string)
 	fmt.Println("Selection cancelled")
