@@ -149,6 +149,10 @@ func (m *Manager) CreateGroup(name string, bundleIDs []string) (*Group, error) {
 		}
 	}
 
+	if len(groupWindows) == 0 {
+		return nil, fmt.Errorf("no capturable windows found for selected apps")
+	}
+
 	group := Group{
 		ID:        generateGroupID(),
 		Name:      name,
@@ -191,6 +195,7 @@ func (m *Manager) RestoreGroup(groupID string) error {
 		}
 	}
 
+	restoredCount := 0
 	// Process each bundle ID in the group
 	for _, bundleID := range group.BundleIDs {
 		windows, exists := windowMap[bundleID]
@@ -212,6 +217,11 @@ func (m *Manager) RestoreGroup(groupID string) error {
 
 		if savedWindow == nil {
 			continue
+		}
+
+		// Bring app to front before geometry restore.
+		if err := accessibility.ActivateApp(bundleID); err != nil {
+			fmt.Printf("Warning: Could not activate app %s: %v\n", bundleID, err)
 		}
 
 		// Apply saved position and size to first available window
@@ -241,11 +251,16 @@ func (m *Manager) RestoreGroup(groupID string) error {
 			accessibility.SetFullScreen(window.ProcessID, window.WindowID, true)
 		}
 
+		restoredCount++
 		fmt.Printf("Restored: %s at (%.0f, %.0f) size (%.0fx%.0f)\n",
 			bundleID, savedWindow.X, savedWindow.Y, savedWindow.Width, savedWindow.Height)
 	}
 
-	fmt.Printf("Group %s restored successfully\n", group.Name)
+	if restoredCount == 0 {
+		return fmt.Errorf("no windows were restored (apps not running or no saved window states)")
+	}
+
+	fmt.Printf("Group %s restored successfully (%d windows)\n", group.Name, restoredCount)
 	return nil
 }
 
@@ -283,9 +298,9 @@ func (m *Manager) GetGroups() []Group {
 
 // GetGroup returns a specific group by ID
 func (m *Manager) GetGroup(id string) *Group {
-	for _, g := range m.groups {
-		if g.ID == id {
-			return &g
+	for i := range m.groups {
+		if m.groups[i].ID == id {
+			return &m.groups[i]
 		}
 	}
 	return nil
@@ -293,9 +308,9 @@ func (m *Manager) GetGroup(id string) *Group {
 
 // GetGroupByName returns a specific group by name
 func (m *Manager) GetGroupByName(name string) *Group {
-	for _, g := range m.groups {
-		if g.Name == name {
-			return &g
+	for i := range m.groups {
+		if m.groups[i].Name == name {
+			return &m.groups[i]
 		}
 	}
 	return nil

@@ -13,7 +13,11 @@
 
 - (void)highlightWindow:(CGWindowID)windowID {
     // Remove existing overlay if any
-    [self.overlays removeObjectForKey:@(windowID)];
+    NSWindow *existing = self.overlays[@(windowID)];
+    if (existing) {
+        [existing orderOut:nil];
+        [self.overlays removeObjectForKey:@(windowID)];
+    }
     
     // Get window info
     CFArrayRef windowList = CGWindowListCopyWindowInfo(
@@ -54,17 +58,20 @@
     overlay.opaque = NO;
     overlay.ignoresMouseEvents = YES;
     overlay.hasShadow = NO;
+    overlay.releasedWhenClosed = NO;
+    overlay.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
     
-    // Add border layer
+    // Add border layer (in overlay-local coordinates)
+    overlay.contentView.wantsLayer = YES;
     CALayer *borderLayer = [CALayer layer];
     borderLayer.borderWidth = 3.0;
     borderLayer.borderColor = [[NSColor systemBlueColor] CGColor];
-    borderLayer.frame = bounds;
-    
+    borderLayer.backgroundColor = [[NSColor clearColor] CGColor];
+    borderLayer.frame = overlay.contentView.bounds;
+    borderLayer.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
     overlay.contentView.layer = borderLayer;
-    overlay.contentView.wantsLayer = YES;
     
-    [overlay orderFront:nil];
+    [overlay orderFrontRegardless];
     
     // Store overlay
     self.overlays[@(windowID)] = overlay;
@@ -96,21 +103,27 @@ void* create_highlight_manager() {
 void highlight_window(void *mgr, uint32_t windowID) {
     if (mgr) {
         HighlightManager *m = (__bridge HighlightManager *)mgr;
-        [m highlightWindow:windowID];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [m highlightWindow:windowID];
+        });
     }
 }
 
 void remove_highlight(void *mgr, uint32_t windowID) {
     if (mgr) {
         HighlightManager *m = (__bridge HighlightManager *)mgr;
-        [m removeHighlightForWindow:windowID];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [m removeHighlightForWindow:windowID];
+        });
     }
 }
 
 void clear_highlights(void *mgr) {
     if (mgr) {
         HighlightManager *m = (__bridge HighlightManager *)mgr;
-        [m clearAllHighlights];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [m clearAllHighlights];
+        });
     }
 }
 

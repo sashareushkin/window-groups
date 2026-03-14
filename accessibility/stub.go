@@ -48,6 +48,11 @@ func SetFullScreen(pid int32, windowID uint32, fullscreen bool) error {
 	return fmt.Errorf("accessibility not available on this platform")
 }
 
+// ActivateApp is a stub
+func ActivateApp(bundleID string) error {
+	return fmt.Errorf("accessibility not available on this platform")
+}
+
 // GetDisplays returns main display only on non-darwin
 func GetDisplays() ([]uint32, int) {
 	return []uint32{0}, 1

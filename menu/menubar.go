@@ -358,7 +358,9 @@ import "C"
 
 import (
 	"fmt"
+	"math/rand"
 	"runtime/cgo"
+	"time"
 	"unsafe"
 
 	"window-groups/highlight"
@@ -575,18 +577,17 @@ func (m *MenuBar) SaveGroup() (string, error) {
 		bundleIDs = append(bundleIDs, bid)
 	}
 
-	// Assign first free slot name: Group 1..10
 	name := m.nextGroupName()
-
-	// Clear highlights
-	if m.highlighter != nil {
-		m.highlighter.ClearAllHighlights()
-	}
 
 	// Create group via window manager (captures current positions)
 	group, err := m.wm.CreateGroup(name, bundleIDs)
 	if err != nil {
 		return "", err
+	}
+
+	// Clear highlights only after successful save.
+	if m.highlighter != nil {
+		m.highlighter.ClearAllHighlights()
 	}
 
 	fmt.Printf("Group saved: %s with %d windows\n", name, len(bundleIDs))
@@ -693,11 +694,32 @@ func (m *MenuBar) nextGroupName() string {
 	for _, g := range m.wm.GetGroups() {
 		used[g.Name] = true
 	}
-	for i := 1; i <= 10; i++ {
-		name := fmt.Sprintf("Group %d", i)
+
+	pool := append([]string(nil), cityNames...)
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	r.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
+
+	for _, name := range pool {
 		if !used[name] {
 			return name
 		}
 	}
-	return fmt.Sprintf("Group %d", len(m.wm.GetGroups())+1)
+
+	// All base names are occupied: deterministic collision-free fallback.
+	base := pool[0]
+	if base == "" {
+		base = "City"
+	}
+	for n := 2; ; n++ {
+		candidate := fmt.Sprintf("%s-%d", base, n)
+		if !used[candidate] {
+			return candidate
+		}
+	}
+}
+
+var cityNames = []string{
+	"Moscow", "London", "Paris", "Berlin", "Madrid", "Rome", "Amsterdam", "Vienna", "Prague", "Warsaw",
+	"New York", "Los Angeles", "Chicago", "Toronto", "Vancouver", "Mexico City", "Sao Paulo", "Buenos Aires", "Santiago", "Lima",
+	"Tokyo", "Seoul", "Beijing", "Shanghai", "Hong Kong", "Singapore", "Bangkok", "Dubai", "Istanbul", "Sydney",
 }
