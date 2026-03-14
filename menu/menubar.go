@@ -74,16 +74,37 @@ void run_appkit() {
 }
 
 - (NSDictionary *)topWindowUnderMouse {
-    NSPoint point = [NSEvent mouseLocation];
+    CGEventRef event = CGEventCreate(NULL);
+    if (event == NULL) {
+        return nil;
+    }
+    CGPoint point = CGEventGetLocation(event); // Quartz coordinates, same space as CGWindow bounds
+    CFRelease(event);
+
     CFArrayRef windowsRef = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
     if (windowsRef == NULL) {
         return nil;
     }
 
     NSArray *windows = (__bridge_transfer NSArray *)windowsRef;
+    NSRunningApplication *selfApp = [NSRunningApplication currentApplication];
+
     for (NSDictionary *info in windows) {
         NSNumber *layer = info[(NSString *)kCGWindowLayer];
         if (layer && layer.intValue != 0) {
+            continue;
+        }
+
+        NSNumber *alpha = info[(NSString *)kCGWindowAlpha];
+        if (alpha && alpha.doubleValue <= 0.01) {
+            continue;
+        }
+
+        NSNumber *pidNumber = info[(NSString *)kCGWindowOwnerPID];
+        if (!pidNumber) {
+            continue;
+        }
+        if ((pid_t)pidNumber.intValue == selfApp.processIdentifier) {
             continue;
         }
 
@@ -96,8 +117,11 @@ void run_appkit() {
         if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)boundsDict, &bounds)) {
             continue;
         }
+        if (bounds.size.width < 2 || bounds.size.height < 2) {
+            continue;
+        }
 
-        if (!CGRectContainsPoint(bounds, CGPointMake(point.x, point.y))) {
+        if (!CGRectContainsPoint(bounds, point)) {
             continue;
         }
 

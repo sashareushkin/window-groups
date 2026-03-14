@@ -3,11 +3,88 @@
 
 package accessibility
 
+/*
+#cgo CFLAGS: -x objective-c -fobjc-arc
+#cgo LDFLAGS: -framework AppKit -framework Foundation -framework Quartz
+
+#import <AppKit/AppKit.h>
+#import <Foundation/Foundation.h>
+#import <CoreGraphics/CoreGraphics.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+static char* wg_copy_windows_dump() {
+    @autoreleasepool {
+        CFArrayRef windowsRef = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+        if (windowsRef == NULL) {
+            return strdup("");
+        }
+
+        NSArray *windows = (__bridge_transfer NSArray *)windowsRef;
+        NSMutableString *out = [NSMutableString string];
+
+        for (NSDictionary *info in windows) {
+            NSNumber *layer = info[(NSString *)kCGWindowLayer];
+            if (layer && layer.intValue != 0) {
+                continue;
+            }
+
+            NSNumber *windowNumber = info[(NSString *)kCGWindowNumber];
+            NSNumber *pidNumber = info[(NSString *)kCGWindowOwnerPID];
+            NSDictionary *boundsDict = info[(NSString *)kCGWindowBounds];
+            if (!windowNumber || !pidNumber || !boundsDict) {
+                continue;
+            }
+
+            CGRect bounds = CGRectZero;
+            if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)boundsDict, &bounds)) {
+                continue;
+            }
+            if (bounds.size.width < 2 || bounds.size.height < 2) {
+                continue;
+            }
+
+            NSNumber *alpha = info[(NSString *)kCGWindowAlpha];
+            if (alpha && alpha.doubleValue <= 0.01) {
+                continue;
+            }
+
+            NSString *ownerName = info[(NSString *)kCGWindowOwnerName];
+            if (ownerName && ([ownerName isEqualToString:@"Window Server"] || [ownerName isEqualToString:@"Dock"])) {
+                continue;
+            }
+
+            NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:(pid_t)pidNumber.intValue];
+            NSString *bundleID = app.bundleIdentifier ?: @"";
+            NSString *appName = app.localizedName ?: (ownerName ?: @"");
+            NSString *title = info[(NSString *)kCGWindowName] ?: @"";
+
+            NSString *line = [NSString stringWithFormat:@"%d\t%@\t%@\t%@\t%.2f\t%.2f\t%.2f\t%.2f\t%u\n",
+                              pidNumber.intValue,
+                              bundleID,
+                              appName,
+                              title,
+                              bounds.origin.x,
+                              bounds.origin.y,
+                              bounds.size.width,
+                              bounds.size.height,
+                              windowNumber.unsignedIntValue];
+            [out appendString:line];
+        }
+
+        return strdup(out.UTF8String ?: "");
+    }
+}
+*/
+import "C"
+
 import (
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
+	"unsafe"
 )
 
 // CheckPermissions returns true on macOS builds.
@@ -16,57 +93,45 @@ func CheckPermissions() bool {
 	return true
 }
 
-// GetWindows returns current windows list via System Events.
+// GetWindows returns current visible app windows via CGWindowListCopyWindowInfo.
 func GetWindows() ([]WindowInfo, error) {
-	script := `tell application "System Events"
-set rows to {}
-repeat with p in (every application process whose background only is false)
-	set pidValue to unix id of p
-	set bundleValue to bundle identifier of p
-	set appNameValue to name of p
-	set ws to windows of p
-	repeat with w in ws
-		try
-			set pos to position of w
-			set sz to size of w
-			set t to name of w
-			set end of rows to ((pidValue as text) & "|" & (bundleValue as text) & "|" & (appNameValue as text) & "|" & (t as text) & "|" & (item 1 of pos as text) & "|" & (item 2 of pos as text) & "|" & (item 1 of sz as text) & "|" & (item 2 of sz as text))
-		end try
-	end repeat
-end repeat
-return rows as text
-end tell`
-
-	out, err := exec.Command("osascript", "-e", script).CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("osascript GetWindows failed: %w (%s)", err, strings.TrimSpace(string(out)))
+	raw := C.wg_copy_windows_dump()
+	if raw == nil {
+		return nil, fmt.Errorf("CGWindowListCopyWindowInfo failed")
 	}
+	defer C.free(unsafe.Pointer(raw))
 
-	text := strings.TrimSpace(string(out))
+	text := strings.TrimSpace(C.GoString(raw))
 	if text == "" {
 		return []WindowInfo{}, nil
 	}
 
-	// AppleScript list as text uses comma+space delimiters.
-	items := strings.Split(text, ", ")
-	result := make([]WindowInfo, 0, len(items))
-	for _, item := range items {
-		parts := strings.Split(item, "|")
-		if len(parts) < 8 {
+	lines := strings.Split(text, "\n")
+	result := make([]WindowInfo, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
+		parts := strings.Split(line, "\t")
+		if len(parts) < 9 {
+			continue
+		}
+
 		pid, _ := strconv.Atoi(parts[0])
 		x, _ := strconv.ParseFloat(parts[4], 64)
 		y, _ := strconv.ParseFloat(parts[5], 64)
 		w, _ := strconv.ParseFloat(parts[6], 64)
 		h, _ := strconv.ParseFloat(parts[7], 64)
+		wid, _ := strconv.ParseUint(parts[8], 10, 32)
+
 		result = append(result, WindowInfo{
 			Title:     parts[3],
 			Bounds:    Rect{X: x, Y: y, Width: w, Height: h},
 			BundleID:  parts[1],
 			AppName:   parts[2],
 			ProcessID: int32(pid),
-			WindowID:  0,
+			WindowID:  uint32(wid),
 			DisplayID: 0,
 		})
 	}
