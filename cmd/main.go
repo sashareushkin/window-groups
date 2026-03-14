@@ -3,14 +3,18 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 
-	"window-groups/window"
-	"window-groups/menu"
 	"window-groups/accessibility"
+	"window-groups/menu"
 	"window-groups/shortcuts"
+	"window-groups/window"
 )
 
 func main() {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	fmt.Println("Window Groups starting...")
 
 	// Check Accessibility permissions
@@ -26,14 +30,18 @@ func main() {
 	hm := shortcuts.NewHotkeyManager(wm)
 
 	// Initialize menu bar
-	_ = menu.NewMenuBar(wm)
+	mb := menu.NewMenuBar(wm)
+	if mb == nil {
+		fmt.Println("Failed to initialize menu bar")
+		os.Exit(1)
+	}
+	defer mb.Destroy()
 
 	// Register default hotkeys for existing groups
 	if err := registerDefaultHotkeys(hm, wm); err != nil {
 		fmt.Printf("Warning: Could not register hotkeys: %v\n", err)
 	}
 
-	// Start menu bar (blocking)
 	fmt.Println("Window Groups ready")
 	fmt.Println("Use menu bar icon to create and restore window groups")
 	fmt.Println("Assign hotkeys to groups for quick restoration")
@@ -43,8 +51,8 @@ func main() {
 		runDemo(wm, hm)
 	}
 
-	// Keep running
-	select {}
+	// Start menu bar + AppKit run loop (blocking)
+	mb.Run()
 }
 
 func registerDefaultHotkeys(hm *shortcuts.HotkeyManager, wm *window.Manager) error {

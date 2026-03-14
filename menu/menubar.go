@@ -10,6 +10,16 @@ package menu
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 
+void init_appkit() {
+    [NSApplication sharedApplication];
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    [NSApp finishLaunching];
+}
+
+void run_appkit() {
+    [NSApp run];
+}
+
 // Menu bar controller
 @interface MenuController : NSObject
 @property (nonatomic, assign) void *goManager;
@@ -196,6 +206,7 @@ type MenuController struct {
 
 // NewMenuController creates a new menu controller
 func NewMenuController() *MenuController {
+	C.init_appkit()
 	ptr := C.create_menu_controller()
 	if ptr == nil {
 		return nil
@@ -256,7 +267,7 @@ func (m *MenuBar) Run() {
 	m.refreshMenu()
 
 	fmt.Println("Menu bar started")
-	// In a real macOS app, this would run the main loop
+	C.run_appkit()
 }
 
 // refreshMenu updates the menu with current groups
