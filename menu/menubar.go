@@ -13,8 +13,8 @@ package menu
 #include <stdlib.h>
 
 extern int go_menu_toggle_create(uintptr_t handle);
-extern void go_menu_restore_group(uintptr_t handle, const char *groupName);
-extern void go_menu_delete_group(uintptr_t handle, const char *groupName);
+extern void go_menu_restore_group(uintptr_t handle, char *groupName);
+extern void go_menu_delete_group(uintptr_t handle, char *groupName);
 extern void go_menu_quit(uintptr_t handle);
 
 void init_appkit() {
