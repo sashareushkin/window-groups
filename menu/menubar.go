@@ -10,6 +10,7 @@ package menu
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 extern int go_menu_toggle_create(uintptr_t handle);
 extern void go_menu_restore_group(uintptr_t handle, const char *groupName);
@@ -283,7 +284,7 @@ func NewMenuBar(wm *window.Manager) *MenuBar {
 		return nil
 	}
 	mb.handle = cgo.NewHandle(mb)
-	C.set_menu_go_handle(mb.controller.ptr, C.uintptr_t(mb.handle))
+	C.set_menu_go_handle(mb.controller.ptr, C.uintptr_t(uintptr(mb.handle)))
 	return mb
 }
 
