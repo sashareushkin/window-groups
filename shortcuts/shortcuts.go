@@ -10,34 +10,77 @@ package shortcuts
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
 
-// Global hotkey callback
+extern void go_hotkey_pressed(unsigned int hotkeyID);
+
+static EventHotKeyRef gHotkeyRefs[256];
+static int gHotkeyHandlerInstalled = 0;
+
 static OSStatus hotkeyHandler(EventHandlerCallRef nextHandler, EventRef theEvent, void *userData) {
-    UInt32 hotkeyID = 0;
-    GetEventParameter(theEvent, kEventParamDirectObject, typeUInt32, NULL, sizeof(hotkeyID), NULL, &hotkeyID);
-    
-    if (userData) {
-        void (*callback)(UInt32) = (void (*)(UInt32))userData;
-        callback(hotkeyID);
+    EventHotKeyID hkCom;
+    OSStatus res = GetEventParameter(theEvent, kEventParamDirectObject, typeEventHotKeyID,
+                                     NULL, sizeof(hkCom), NULL, &hkCom);
+    if (res == noErr) {
+        go_hotkey_pressed((unsigned int)hkCom.id);
     }
-    
     return noErr;
 }
 
-// Register global hotkey
-int register_hotkey(void *callback, UInt32 modifiers, UInt32 keyCode) {
-    EventHotKeyRef hotkeyRef;
-    EventHotKeyID hotkeyID;
-    hotkeyID.signature = 'WGRP';
-    hotkeyID.id = 1;
-    
-    OSStatus status = RegisterEventHotKey(keyCode, modifiers, hotkeyID, 
-                                          GetApplicationEventTarget(), 0, &hotkeyRef);
-    return status == noErr ? 0 : -1;
+static int ensure_hotkey_handler() {
+    if (gHotkeyHandlerInstalled) {
+        return 0;
+    }
+
+    EventTypeSpec eventType;
+    eventType.eventClass = kEventClassKeyboard;
+    eventType.eventKind = kEventHotKeyPressed;
+
+    OSStatus status = InstallApplicationEventHandler(&hotkeyHandler, 1, &eventType, NULL, NULL);
+    if (status != noErr) {
+        return -1;
+    }
+
+    gHotkeyHandlerInstalled = 1;
+    return 0;
 }
 
-// Unregister global hotkey
-void unregister_hotkey(int refCon) {
-    // Would need to store and release EventHotKeyRef
+int register_hotkey(UInt32 hotkeyID, UInt32 modifiers, UInt32 keyCode) {
+    if (hotkeyID >= 256) {
+        return -1;
+    }
+
+    if (ensure_hotkey_handler() != 0) {
+        return -1;
+    }
+
+    if (gHotkeyRefs[hotkeyID] != NULL) {
+        UnregisterEventHotKey(gHotkeyRefs[hotkeyID]);
+        gHotkeyRefs[hotkeyID] = NULL;
+    }
+
+    EventHotKeyID hkID;
+    hkID.signature = 'WGRP';
+    hkID.id = hotkeyID;
+
+    EventHotKeyRef hotkeyRef = NULL;
+    OSStatus status = RegisterEventHotKey(keyCode, modifiers, hkID,
+                                          GetApplicationEventTarget(), 0, &hotkeyRef);
+    if (status != noErr) {
+        return -1;
+    }
+
+    gHotkeyRefs[hotkeyID] = hotkeyRef;
+    return 0;
+}
+
+void unregister_hotkey(UInt32 hotkeyID) {
+    if (hotkeyID >= 256) {
+        return;
+    }
+
+    if (gHotkeyRefs[hotkeyID] != NULL) {
+        UnregisterEventHotKey(gHotkeyRefs[hotkeyID]);
+        gHotkeyRefs[hotkeyID] = NULL;
+    }
 }
 
 // Carbon modifier constants
@@ -50,8 +93,14 @@ import "C"
 
 import (
 	"fmt"
+	"sync"
 
 	"window-groups/window"
+)
+
+var (
+	activeHotkeyManager *HotkeyManager
+	activeMu            sync.RWMutex
 )
 
 // Shortcut represents a keyboard shortcut
@@ -63,19 +112,24 @@ type Shortcut struct {
 
 // HotkeyManager manages global hotkeys
 type HotkeyManager struct {
-	wm          *window.Manager
-	shortcuts   map[int]Shortcut // hotkeyID -> shortcut
-	callback    func(string)     // groupName -> callback
+	wm           *window.Manager
+	shortcuts    map[int]Shortcut // hotkeyID -> shortcut
 	nextHotkeyID int
 }
 
 // NewHotkeyManager creates a new hotkey manager
 func NewHotkeyManager(wm *window.Manager) *HotkeyManager {
-	return &HotkeyManager{
-		wm:          wm,
-		shortcuts:   make(map[int]Shortcut),
+	hm := &HotkeyManager{
+		wm:           wm,
+		shortcuts:    make(map[int]Shortcut),
 		nextHotkeyID: 1,
 	}
+
+	activeMu.Lock()
+	activeHotkeyManager = hm
+	activeMu.Unlock()
+
+	return hm
 }
 
 // RegisterShortcut registers a global hotkey for a group
@@ -84,23 +138,22 @@ func (m *HotkeyManager) RegisterShortcut(groupName string, keyCode int, modifier
 		return fmt.Errorf("window manager not set")
 	}
 
-	// Validate group exists
 	group := m.wm.GetGroup(groupName)
 	if group == nil {
 		return fmt.Errorf("group not found: %s", groupName)
 	}
 
-	// Convert modifiers
-	cModifiers := m.convertModifiers(modifiers)
-	cKeyCode := C.UInt32(keyCode)
+	hotkeyID := m.nextHotkeyID
+	if hotkeyID >= 256 {
+		return fmt.Errorf("hotkey limit reached")
+	}
 
-	// Register hotkey (would use Carbon API in real implementation)
-	result := C.register_hotkey(nil, C.UInt32(cModifiers), cKeyCode)
+	cModifiers := m.convertModifiers(modifiers)
+	result := C.register_hotkey(C.UInt32(hotkeyID), C.UInt32(cModifiers), C.UInt32(keyCode))
 	if result != 0 {
 		return fmt.Errorf("failed to register hotkey")
 	}
 
-	hotkeyID := m.nextHotkeyID
 	m.shortcuts[hotkeyID] = Shortcut{
 		KeyCode:   keyCode,
 		Modifiers: modifiers,
@@ -108,7 +161,7 @@ func (m *HotkeyManager) RegisterShortcut(groupName string, keyCode int, modifier
 	}
 	m.nextHotkeyID++
 
-	fmt.Printf("Registered hotkey for group %s: modifiers=%d, keyCode=%d\n", groupName, modifiers, keyCode)
+	fmt.Printf("Registered hotkey for group %s: %s\n", groupName, m.shortcuts[hotkeyID].String())
 	return nil
 }
 
@@ -116,13 +169,22 @@ func (m *HotkeyManager) RegisterShortcut(groupName string, keyCode int, modifier
 func (m *HotkeyManager) UnregisterShortcut(groupName string) error {
 	for id, sc := range m.shortcuts {
 		if sc.GroupName == groupName {
-			C.unregister_hotkey(C.int(id))
+			C.unregister_hotkey(C.UInt32(id))
 			delete(m.shortcuts, id)
 			fmt.Printf("Unregistered hotkey for group %s\n", groupName)
 			return nil
 		}
 	}
 	return fmt.Errorf("no hotkey found for group: %s", groupName)
+}
+
+// HandleHotkey triggers restore by hotkey id.
+func (m *HotkeyManager) HandleHotkey(hotkeyID int) {
+	sc, ok := m.shortcuts[hotkeyID]
+	if !ok {
+		return
+	}
+	m.RestoreGroup(sc.GroupName)
 }
 
 // GetShortcuts returns all registered shortcuts
@@ -159,25 +221,31 @@ func (m *HotkeyManager) RestoreGroup(groupName string) {
 	fmt.Printf("Group %s restored via hotkey\n", groupName)
 }
 
+// getActiveManager returns current active hotkey manager
+func getActiveManager() *HotkeyManager {
+	activeMu.RLock()
+	defer activeMu.RUnlock()
+	return activeHotkeyManager
+}
+
 // convertModifiers converts Go modifiers to Carbon modifiers
 func (m *HotkeyManager) convertModifiers(modifiers int) int {
 	result := 0
-	if modifiers&1 != 0 { // Command
+	if modifiers&1 != 0 {
 		result |= int(C.mod_cmd)
 	}
-	if modifiers&2 != 0 { // Shift
+	if modifiers&2 != 0 {
 		result |= int(C.mod_shift)
 	}
-	if modifiers&4 != 0 { // Option
+	if modifiers&4 != 0 {
 		result |= int(C.mod_option)
 	}
-	if modifiers&8 != 0 { // Control
+	if modifiers&8 != 0 {
 		result |= int(C.mod_control)
 	}
 	return result
 }
 
-// Key codes for common keys
 const (
 	KeyA = 0
 	KeyB = 11
@@ -217,26 +285,25 @@ const (
 	Key8 = 28
 	Key9 = 25
 
-	KeySpace = 49
+	KeySpace  = 49
 	KeyReturn = 36
-	KeyTab = 48
+	KeyTab    = 48
 	KeyEscape = 53
 
-	KeyF1 = 122
-	KeyF2 = 120
-	KeyF3 = 99
-	KeyF4 = 118
-	KeyF5 = 96
-	KeyF6 = 97
-	KeyF7 = 98
-	KeyF8 = 100
-	KeyF9 = 101
+	KeyF1  = 122
+	KeyF2  = 120
+	KeyF3  = 99
+	KeyF4  = 118
+	KeyF5  = 96
+	KeyF6  = 97
+	KeyF7  = 98
+	KeyF8  = 100
+	KeyF9  = 101
 	KeyF10 = 109
 	KeyF11 = 103
 	KeyF12 = 111
 )
 
-// Modifier constants
 const (
 	ModCommand = 1
 	ModShift   = 2
@@ -244,16 +311,13 @@ const (
 	ModControl = 8
 )
 
-// KeyEvent represents a keyboard event
 type KeyEvent struct {
 	KeyCode   int
 	Modifiers int
 }
 
-// String returns a human-readable string for the shortcut
 func (s Shortcut) String() string {
 	result := ""
-	
 	if s.Modifiers&ModControl != 0 {
 		result += "⌃"
 	}
@@ -266,13 +330,10 @@ func (s Shortcut) String() string {
 	if s.Modifiers&ModCommand != 0 {
 		result += "⌘"
 	}
-	
 	result += keyCodeToString(s.KeyCode)
-	
 	return result
 }
 
-// keyCodeToString converts a key code to a string
 func keyCodeToString(code int) string {
 	keys := map[int]string{
 		KeyA: "A", KeyB: "B", KeyC: "C", KeyD: "D", KeyE: "E",
@@ -288,10 +349,8 @@ func keyCodeToString(code int) string {
 		KeyF5: "F5", KeyF6: "F6", KeyF7: "F7", KeyF8: "F8",
 		KeyF9: "F9", KeyF10: "F10", KeyF11: "F11", KeyF12: "F12",
 	}
-	
 	if key, ok := keys[code]; ok {
 		return key
 	}
-	
 	return fmt.Sprintf("Key%d", code)
 }

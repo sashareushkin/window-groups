@@ -279,7 +279,11 @@ func NewMenuController() *MenuController {
 
 // UpdateGroups updates the groups in the menu
 func (m *MenuController) UpdateGroups(groups []string) {
-	if m.ptr == nil || len(groups) == 0 {
+	if m.ptr == nil {
+		return
+	}
+	if len(groups) == 0 {
+		C.update_menu_groups(m.ptr, nil, 0)
 		return
 	}
 

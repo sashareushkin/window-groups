@@ -58,16 +58,16 @@ func main() {
 func registerDefaultHotkeys(hm *shortcuts.HotkeyManager, wm *window.Manager) error {
 	groups := wm.GetGroups()
 	
-	// Default hotkey assignments based on group index
-	// First group: ⌘1, second: ⌘2, etc.
+	// Default hotkeys: ⌃⌥⌘1..9,0 to reduce conflicts with app shortcuts.
+	defaultKeys := []int{shortcuts.Key1, shortcuts.Key2, shortcuts.Key3, shortcuts.Key4, shortcuts.Key5, shortcuts.Key6, shortcuts.Key7, shortcuts.Key8, shortcuts.Key9, shortcuts.Key0}
 	for i, group := range groups {
-		if i > 9 { // Max 10 groups
+		if i >= len(defaultKeys) {
 			break
 		}
-		
-		keyCode := shortcuts.Key0 + i
-		modifiers := shortcuts.ModCommand
-		
+
+		keyCode := defaultKeys[i]
+		modifiers := shortcuts.ModCommand | shortcuts.ModOption | shortcuts.ModControl
+
 		if err := hm.RegisterShortcut(group.Name, keyCode, modifiers); err != nil {
 			fmt.Printf("Warning: Could not register hotkey for %s: %v\n", group.Name, err)
 		}

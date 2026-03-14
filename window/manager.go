@@ -192,32 +192,9 @@ func (m *Manager) RestoreGroup(groupID string) error {
 		windows, exists := windowMap[bundleID]
 
 		if !exists || len(windows) == 0 {
-			// App not running - launch it
-			fmt.Printf("Launching app: %s\n", bundleID)
-			if err := m.launchApp(bundleID); err != nil {
-				fmt.Printf("Warning: Could not launch %s: %v\n", bundleID, err)
-				continue
-			}
-
-			// Wait for app to launch and create windows
-			time.Sleep(500 * time.Millisecond)
-
-			// Try again to get windows
-			currentWindows, err = accessibility.GetWindows()
-			if err != nil {
-				continue
-			}
-
-			for _, w := range currentWindows {
-				if w.BundleID == bundleID {
-					windows = append(windows, w)
-				}
-			}
-
-			if len(windows) == 0 {
-				fmt.Printf("Warning: No windows found for %s after launch\n", bundleID)
-				continue
-			}
+			// По текущему продукт-решению: не запускать закрытые приложения автоматически.
+			fmt.Printf("Skip %s: app is not running\n", bundleID)
+			continue
 		}
 
 		// Find matching window in saved group
