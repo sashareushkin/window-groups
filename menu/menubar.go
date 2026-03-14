@@ -168,7 +168,7 @@ void run_appkit() {
 // C interface
 void* create_menu_controller() {
     MenuController *controller = [[MenuController alloc] init];
-    return (__bridge void *)controller;
+    return (__bridge_retained void *)controller;
 }
 
 void update_menu_groups(void *controller, char **groups, int count) {
@@ -184,7 +184,7 @@ void update_menu_groups(void *controller, char **groups, int count) {
 
 void destroy_menu_controller(void *controller) {
     if (controller) {
-        MenuController *c = (__bridge MenuController *)controller;
+        MenuController *c = (__bridge_transfer MenuController *)controller;
         [[NSStatusBar systemStatusBar] removeStatusItem:c.statusItem];
     }
 }
