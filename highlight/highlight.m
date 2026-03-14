@@ -90,7 +90,7 @@
 // C interface implementation
 void* create_highlight_manager() {
     HighlightManager *mgr = [[HighlightManager alloc] init];
-    return (__bridge void *)mgr;
+    return (__bridge_retained void *)mgr;
 }
 
 void highlight_window(void *mgr, uint32_t windowID) {
@@ -116,7 +116,7 @@ void clear_highlights(void *mgr) {
 
 void destroy_highlight_manager(void *mgr) {
     if (mgr) {
-        HighlightManager *m = (__bridge HighlightManager *)mgr;
+        HighlightManager *m = (__bridge_transfer HighlightManager *)mgr;
         [m clearAllHighlights];
     }
 }
