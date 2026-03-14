@@ -64,6 +64,16 @@ func go_menu_delete_group(handle C.uintptr_t, groupName *C.char) {
 	}
 }
 
+//export go_menu_add_frontmost
+func go_menu_add_frontmost(handle C.uintptr_t, bundleID *C.char) {
+	h := cgo.Handle(handle)
+	mb, ok := h.Value().(*MenuBar)
+	if !ok || mb == nil || bundleID == nil {
+		return
+	}
+	mb.AddSelectedBundle(C.GoString(bundleID))
+}
+
 //export go_menu_quit
 func go_menu_quit(handle C.uintptr_t) {
 	h := cgo.Handle(handle)

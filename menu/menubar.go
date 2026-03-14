@@ -16,6 +16,7 @@ extern int go_menu_toggle_create(uintptr_t handle);
 extern void go_menu_restore_group(uintptr_t handle, char *groupName);
 extern void go_menu_delete_group(uintptr_t handle, char *groupName);
 extern void go_menu_quit(uintptr_t handle);
+extern void go_menu_add_frontmost(uintptr_t handle, char *bundleID);
 
 void init_appkit() {
     [NSApplication sharedApplication];
@@ -122,8 +123,27 @@ void run_appkit() {
     createItem.target = self;
     [_menu addItem:createItem];
     
-    // Cancel selection (only in selection mode)
+    // Selection controls
     if (_isSelectingWindows) {
+        NSMenuItem *addFrontmostItem = [[NSMenuItem alloc] initWithTitle:@"Add Frontmost App" 
+                                                                   action:@selector(addFrontmostWindow:) 
+                                                            keyEquivalent:@"a"];
+        addFrontmostItem.target = self;
+        [_menu addItem:addFrontmostItem];
+
+        if (_selectedWindows.count > 0) {
+            [_menu addItem:[NSMenuItem separatorItem]];
+            NSMenuItem *selectedHeader = [[NSMenuItem alloc] initWithTitle:@"Selected apps" action:nil keyEquivalent:@""];
+            selectedHeader.enabled = NO;
+            [_menu addItem:selectedHeader];
+            for (NSString *bundle in _selectedWindows) {
+                NSMenuItem *b = [[NSMenuItem alloc] initWithTitle:bundle action:nil keyEquivalent:@""];
+                b.enabled = NO;
+                [_menu addItem:b];
+            }
+        }
+
+        [_menu addItem:[NSMenuItem separatorItem]];
         NSMenuItem *cancelItem = [[NSMenuItem alloc] initWithTitle:@"Cancel" 
                                                             action:@selector(cancelSelection:) 
                                                      keyEquivalent:@""];
@@ -161,6 +181,25 @@ void run_appkit() {
         _isSelectingWindows = (selecting != 0);
     } else {
         _isSelectingWindows = !_isSelectingWindows;
+    }
+    if (!_isSelectingWindows) {
+        [_selectedWindows removeAllObjects];
+    }
+    [self rebuildMenu];
+}
+
+- (void)addFrontmostWindow:(id)sender {
+    NSRunningApplication *app = [[NSWorkspace sharedWorkspace] frontmostApplication];
+    NSString *bundle = app.bundleIdentifier;
+    if (!bundle || bundle.length == 0) {
+        return;
+    }
+
+    if (![_selectedWindows containsObject:bundle]) {
+        [_selectedWindows addObject:bundle];
+        if (_goHandle != 0) {
+            go_menu_add_frontmost(_goHandle, (char *)[bundle UTF8String]);
+        }
     }
     [self rebuildMenu];
 }
@@ -328,6 +367,21 @@ func (m *MenuBar) StartWindowSelection() error {
 	fmt.Println("Click on windows to add them to the group")
 
 	return nil
+}
+
+// AddSelectedBundle adds an app (bundle id) to the selection.
+func (m *MenuBar) AddSelectedBundle(bundleID string) {
+	if !m.isSelecting || bundleID == "" {
+		return
+	}
+	for _, existing := range m.selectedWindows {
+		if existing == bundleID {
+			return
+		}
+	}
+	id := uint32(len(m.selectedWindows) + 1)
+	m.selectedWindows[id] = bundleID
+	fmt.Printf("Selected app: %s (total: %d)\n", bundleID, len(m.selectedWindows))
 }
 
 // AddSelectedWindow adds a window to the selection with highlight
