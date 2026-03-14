@@ -9,6 +9,12 @@ package menu
 
 #import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
+#include <stdint.h>
+
+extern int go_menu_toggle_create(uintptr_t handle);
+extern void go_menu_restore_group(uintptr_t handle, const char *groupName);
+extern void go_menu_delete_group(uintptr_t handle, const char *groupName);
+extern void go_menu_quit(uintptr_t handle);
 
 void init_appkit() {
     [NSApplication sharedApplication];
@@ -22,7 +28,7 @@ void run_appkit() {
 
 // Menu bar controller
 @interface MenuController : NSObject
-@property (nonatomic, assign) void *goManager;
+@property (nonatomic, assign) uintptr_t goHandle;
 @property (nonatomic, strong) NSStatusItem *statusItem;
 @property (nonatomic, strong) NSMenu *menu;
 @property (nonatomic, assign) BOOL isSelectingWindows;
@@ -55,7 +61,9 @@ void run_appkit() {
 
 - (void)updateGroups:(NSArray *)groups {
     [_groupNames removeAllObjects];
-    [_groupNames addObjectsFromArray:groups];
+    if (groups) {
+        [_groupNames addObjectsFromArray:groups];
+    }
     [self rebuildMenu];
 }
 
@@ -133,23 +141,26 @@ void run_appkit() {
 }
 
 - (void)restoreGroup:(id)sender {
-    NSLog(@"Restore group requested");
+    NSString *groupName = ((NSMenuItem *)sender).title;
+    if (_goHandle != 0) {
+        go_menu_restore_group(_goHandle, [groupName UTF8String]);
+    }
 }
 
 - (void)deleteGroup:(id)sender {
-    NSLog(@"Delete group requested");
+    NSString *groupName = ((NSMenuItem *)sender).title;
+    if (_goHandle != 0) {
+        go_menu_delete_group(_goHandle, [groupName UTF8String]);
+    }
 }
 
 - (void)toggleCreateMode:(id)sender {
-    _isSelectingWindows = !_isSelectingWindows;
-    
-    if (_isSelectingWindows) {
-        NSLog(@"Starting window selection mode");
+    if (_goHandle != 0) {
+        int selecting = go_menu_toggle_create(_goHandle);
+        _isSelectingWindows = (selecting != 0);
     } else {
-        NSLog(@"Saving group with %lu windows", (unsigned long)_selectedWindows.count);
-        [_selectedWindows removeAllObjects];
+        _isSelectingWindows = !_isSelectingWindows;
     }
-    
     [self rebuildMenu];
 }
 
@@ -160,6 +171,9 @@ void run_appkit() {
 }
 
 - (void)quit:(id)sender {
+    if (_goHandle != 0) {
+        go_menu_quit(_goHandle);
+    }
     [[NSApplication sharedApplication] terminate:nil];
 }
 
@@ -169,6 +183,13 @@ void run_appkit() {
 void* create_menu_controller() {
     MenuController *controller = [[MenuController alloc] init];
     return (__bridge_retained void *)controller;
+}
+
+void set_menu_go_handle(void *controller, uintptr_t handle) {
+    if (controller) {
+        MenuController *c = (__bridge MenuController *)controller;
+        c.goHandle = handle;
+    }
 }
 
 void update_menu_groups(void *controller, char **groups, int count) {
@@ -193,8 +214,11 @@ import "C"
 
 import (
 	"fmt"
+	"os"
+	"runtime/cgo"
 	"unsafe"
 
+	"window-groups/accessibility"
 	"window-groups/highlight"
 	"window-groups/window"
 )
@@ -242,18 +266,25 @@ type MenuBar struct {
 	wm              *window.Manager
 	controller      *MenuController
 	highlighter     *highlight.Manager
+	handle          cgo.Handle
 	isSelecting     bool
 	selectedWindows map[uint32]string // windowID -> bundleID
 }
 
 // NewMenuBar creates a new menu bar
 func NewMenuBar(wm *window.Manager) *MenuBar {
-	return &MenuBar{
+	mb := &MenuBar{
 		wm:              wm,
 		controller:      NewMenuController(),
 		highlighter:     highlight.NewManager(),
 		selectedWindows: make(map[uint32]string),
 	}
+	if mb.controller == nil {
+		return nil
+	}
+	mb.handle = cgo.NewHandle(mb)
+	C.set_menu_go_handle(mb.controller.ptr, C.uintptr_t(mb.handle))
+	return mb
 }
 
 // Run starts the menu bar (blocking)
@@ -341,13 +372,29 @@ func (m *MenuBar) SaveGroup() (string, error) {
 		return "", fmt.Errorf("not in selection mode")
 	}
 
+	// Fallback: if interactive selection is empty, capture all currently visible windows.
+	if len(m.selectedWindows) == 0 {
+		if windows, err := accessibility.GetWindows(); err == nil {
+			for _, w := range windows {
+				if w.BundleID != "" {
+					m.selectedWindows[w.WindowID] = w.BundleID
+				}
+			}
+		}
+	}
+
 	if len(m.selectedWindows) == 0 {
 		return "", fmt.Errorf("no windows selected")
 	}
 
-	// Extract bundle IDs
+	// Extract unique bundle IDs
+	seen := make(map[string]bool)
 	bundleIDs := make([]string, 0, len(m.selectedWindows))
 	for _, bid := range m.selectedWindows {
+		if bid == "" || seen[bid] {
+			continue
+		}
+		seen[bid] = true
 		bundleIDs = append(bundleIDs, bid)
 	}
 
@@ -396,12 +443,18 @@ func (m *MenuBar) RestoreGroup(groupName string) error {
 
 // DeleteGroup deletes a saved group
 func (m *MenuBar) DeleteGroup(groupName string) error {
-	group := m.wm.GetGroup(groupName)
-	if group == nil {
+	var groupID string
+	for _, g := range m.wm.GetGroups() {
+		if g.Name == groupName {
+			groupID = g.ID
+			break
+		}
+	}
+	if groupID == "" {
 		return fmt.Errorf("group not found: %s", groupName)
 	}
 
-	err := m.wm.DeleteGroup(group.ID)
+	err := m.wm.DeleteGroup(groupID)
 	if err != nil {
 		return fmt.Errorf("failed to delete group: %w", err)
 	}
@@ -448,6 +501,71 @@ func (m *MenuBar) Destroy() {
 	if m.controller != nil {
 		m.controller.Destroy()
 	}
+	if m.handle != 0 {
+		m.handle.Delete()
+		m.handle = 0
+	}
+}
+
+//export go_menu_toggle_create
+func go_menu_toggle_create(handle C.uintptr_t) C.int {
+	h := cgo.Handle(handle)
+	mb, ok := h.Value().(*MenuBar)
+	if !ok || mb == nil {
+		return 0
+	}
+
+	if mb.IsSelecting() {
+		if name, err := mb.SaveGroup(); err != nil {
+			fmt.Printf("Save group failed: %v\n", err)
+		} else {
+			fmt.Printf("Group saved: %s\n", name)
+		}
+		return 0
+	}
+
+	if err := mb.StartWindowSelection(); err != nil {
+		fmt.Printf("Start selection failed: %v\n", err)
+		return 0
+	}
+	return 1
+}
+
+//export go_menu_restore_group
+func go_menu_restore_group(handle C.uintptr_t, groupName *C.char) {
+	h := cgo.Handle(handle)
+	mb, ok := h.Value().(*MenuBar)
+	if !ok || mb == nil || groupName == nil {
+		return
+	}
+	name := C.GoString(groupName)
+	if err := mb.RestoreGroup(name); err != nil {
+		fmt.Printf("Restore group failed: %v\n", err)
+	}
+}
+
+//export go_menu_delete_group
+func go_menu_delete_group(handle C.uintptr_t, groupName *C.char) {
+	h := cgo.Handle(handle)
+	mb, ok := h.Value().(*MenuBar)
+	if !ok || mb == nil || groupName == nil {
+		return
+	}
+	name := C.GoString(groupName)
+	if err := mb.DeleteGroup(name); err != nil {
+		fmt.Printf("Delete group failed: %v\n", err)
+	}
+}
+
+//export go_menu_quit
+func go_menu_quit(handle C.uintptr_t) {
+	h := cgo.Handle(handle)
+	mb, ok := h.Value().(*MenuBar)
+	if !ok || mb == nil {
+		return
+	}
+	mb.Destroy()
+	os.Exit(0)
 }
 
 // generateGroupName generates a city-based name for the group
@@ -460,12 +578,17 @@ func generateGroupName(windowCount int) string {
 		"Megacity",   // 10+ windows
 	}
 
-	if windowCount <= 0 {
+	if windowCount <= 2 {
 		return cities[0]
 	}
-	if windowCount > len(cities)-1 {
-		return cities[len(cities)-1]
+	if windowCount <= 4 {
+		return cities[1]
 	}
-
-	return cities[windowCount]
+	if windowCount <= 6 {
+		return cities[2]
+	}
+	if windowCount <= 9 {
+		return cities[3]
+	}
+	return cities[4]
 }
