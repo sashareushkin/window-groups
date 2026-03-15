@@ -73,13 +73,7 @@ void run_appkit() {
     [self rebuildMenu];
 }
 
-- (NSDictionary *)topWindowUnderMouse {
-    CGEventRef event = CGEventCreate(NULL);
-    if (event == NULL) {
-        return nil;
-    }
-    CGPoint point = CGEventGetLocation(event); // Quartz coordinates, same space as CGWindow bounds
-    CFRelease(event);
+- (NSDictionary *)topWindowAtPoint:(CGPoint)point {
 
     CFArrayRef windowsRef = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
     if (windowsRef == NULL) {
@@ -147,7 +141,9 @@ void run_appkit() {
             return;
         }
 
-        NSDictionary *windowInfo = [selfStrong topWindowUnderMouse];
+        CGEventRef cgEvent = [event CGEvent];
+        CGPoint point = cgEvent ? CGEventGetLocation(cgEvent) : [NSEvent mouseLocation];
+        NSDictionary *windowInfo = [selfStrong topWindowAtPoint:point];
         if (!windowInfo) {
             return;
         }
@@ -318,10 +314,44 @@ void run_appkit() {
         return;
     }
 
-    NSNumber *fakeID = @((uint32_t)(100000 + _selectedWindows.count + 1));
-    _selectedWindows[fakeID] = bundle;
+    CFArrayRef windowsRef = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+    if (windowsRef == NULL) {
+        return;
+    }
+
+    NSArray *windows = (__bridge_transfer NSArray *)windowsRef;
+    NSNumber *foundWindow = nil;
+    for (NSDictionary *info in windows) {
+        NSNumber *pidNumber = info[(NSString *)kCGWindowOwnerPID];
+        NSNumber *windowNumber = info[(NSString *)kCGWindowNumber];
+        if (!pidNumber || !windowNumber) {
+            continue;
+        }
+        if ((pid_t)pidNumber.intValue != app.processIdentifier) {
+            continue;
+        }
+        foundWindow = windowNumber;
+        break;
+    }
+
+    if (!foundWindow) {
+        return;
+    }
+
+    if (_selectedWindows[foundWindow] != nil) {
+        [self rebuildMenu];
+        return;
+    }
+
     if (_goHandle != 0) {
-        go_menu_add_frontmost(_goHandle, (char *)[bundle UTF8String]);
+        int selected = go_menu_toggle_window(_goHandle, (uint32_t)foundWindow.unsignedIntValue, (char *)bundle.UTF8String);
+        if (selected != 0) {
+            _selectedWindows[foundWindow] = bundle;
+        } else {
+            [_selectedWindows removeObjectForKey:foundWindow];
+        }
+    } else {
+        _selectedWindows[foundWindow] = bundle;
     }
 
     [self rebuildMenu];
@@ -521,19 +551,22 @@ func (m *MenuBar) StartWindowSelection() error {
 	return nil
 }
 
-// AddSelectedBundle adds an app (bundle id) to the selection.
+// AddSelectedBundle selects one concrete current window for bundle id (legacy path).
 func (m *MenuBar) AddSelectedBundle(bundleID string) {
 	if !m.isSelecting || bundleID == "" {
 		return
 	}
-	for _, existing := range m.selectedWindows {
-		if existing == bundleID {
+	windows, err := m.wm.CaptureWindows()
+	if err != nil {
+		fmt.Printf("Warning: cannot capture windows for %s: %v\n", bundleID, err)
+		return
+	}
+	for _, w := range windows {
+		if w.BundleID == bundleID {
+			m.AddSelectedWindow(w.WindowID, bundleID)
 			return
 		}
 	}
-	id := uint32(len(m.selectedWindows) + 1)
-	m.selectedWindows[id] = bundleID
-	fmt.Printf("Selected app: %s (total: %d)\n", bundleID, len(m.selectedWindows))
 }
 
 // AddSelectedWindow adds a window to the selection with highlight
@@ -590,21 +623,10 @@ func (m *MenuBar) SaveGroup() (string, error) {
 		return "", fmt.Errorf("no windows selected")
 	}
 
-	// Extract unique bundle IDs
-	seen := make(map[string]bool)
-	bundleIDs := make([]string, 0, len(m.selectedWindows))
-	for _, bid := range m.selectedWindows {
-		if bid == "" || seen[bid] {
-			continue
-		}
-		seen[bid] = true
-		bundleIDs = append(bundleIDs, bid)
-	}
-
 	name := m.nextGroupName()
 
-	// Create group via window manager (captures current positions)
-	group, err := m.wm.CreateGroup(name, bundleIDs)
+	// Create group via window manager (captures only explicitly selected windows)
+	group, err := m.wm.CreateGroup(name, m.selectedWindows)
 	if err != nil {
 		return "", err
 	}
@@ -614,7 +636,7 @@ func (m *MenuBar) SaveGroup() (string, error) {
 		m.highlighter.ClearAllHighlights()
 	}
 
-	fmt.Printf("Group saved: %s with %d windows\n", name, len(bundleIDs))
+	fmt.Printf("Group saved: %s with %d windows\n", name, len(m.selectedWindows))
 
 	// Reset selection
 	m.isSelecting = false

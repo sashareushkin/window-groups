@@ -75,11 +75,19 @@ func registerDefaultHotkeys(hm *shortcuts.HotkeyManager, wm *window.Manager) err
 func runDemo(wm *window.Manager, hm *shortcuts.HotkeyManager) {
 	fmt.Println("\n=== Demo Mode ===")
 
-	// Create a test group
-	group, err := wm.CreateGroup("Demo City", []string{
-		"com.apple.Safari",
-		"com.apple.Terminal",
-	})
+	// Create a test group from currently visible Safari/Terminal windows
+	captured, err := wm.CaptureWindows()
+	if err != nil {
+		fmt.Printf("Error capturing windows: %v\n", err)
+		return
+	}
+	selected := map[uint32]string{}
+	for _, w := range captured {
+		if w.BundleID == "com.apple.Safari" || w.BundleID == "com.apple.Terminal" {
+			selected[w.WindowID] = w.BundleID
+		}
+	}
+	group, err := wm.CreateGroup("Demo City", selected)
 	if err != nil {
 		fmt.Printf("Error creating group: %v\n", err)
 		return

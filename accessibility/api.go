@@ -139,30 +139,35 @@ func GetWindows() ([]WindowInfo, error) {
 	return result, nil
 }
 
-func SetWindowPosition(pid int32, windowID uint32, x, y float64) error {
+func runWindowScript(pid int32, windowID uint32, body string) error {
 	script := fmt.Sprintf(`tell application "System Events"
 set p to first application process whose unix id is %d
 if (count of windows of p) is 0 then error "no windows"
-set position of front window of p to {%d, %d}
-end tell`, pid, int(x), int(y))
+set targetWindow to missing value
+repeat with w in windows of p
+	try
+		if (value of attribute "AXWindowNumber" of w) is %d then
+			set targetWindow to w
+			exit repeat
+		end if
+	end try
+end repeat
+if targetWindow is missing value then error "window not found"
+%s
+end tell`, pid, windowID, body)
 	out, err := exec.Command("osascript", "-e", script).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("set position failed: %w (%s)", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("window script failed: %w (%s)", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
+func SetWindowPosition(pid int32, windowID uint32, x, y float64) error {
+	return runWindowScript(pid, windowID, fmt.Sprintf("set position of targetWindow to {%d, %d}", int(x), int(y)))
+}
+
 func SetWindowSize(pid int32, windowID uint32, width, height float64) error {
-	script := fmt.Sprintf(`tell application "System Events"
-set p to first application process whose unix id is %d
-if (count of windows of p) is 0 then error "no windows"
-set size of front window of p to {%d, %d}
-end tell`, pid, int(width), int(height))
-	out, err := exec.Command("osascript", "-e", script).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("set size failed: %w (%s)", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return runWindowScript(pid, windowID, fmt.Sprintf("set size of targetWindow to {%d, %d}", int(width), int(height)))
 }
 
 func SetWindowBounds(pid int32, windowID uint32, bounds Rect) error {
@@ -173,23 +178,11 @@ func SetWindowBounds(pid int32, windowID uint32, bounds Rect) error {
 }
 
 func MinimizeWindow(pid int32, windowID uint32) error {
-	script := fmt.Sprintf(`tell application "System Events"
-set p to first application process whose unix id is %d
-if (count of windows of p) is 0 then return
-set value of attribute "AXMinimized" of front window of p to true
-end tell`, pid)
-	_, err := exec.Command("osascript", "-e", script).CombinedOutput()
-	return err
+	return runWindowScript(pid, windowID, `set value of attribute "AXMinimized" of targetWindow to true`)
 }
 
 func UnminimizeWindow(pid int32, windowID uint32) error {
-	script := fmt.Sprintf(`tell application "System Events"
-set p to first application process whose unix id is %d
-if (count of windows of p) is 0 then return
-set value of attribute "AXMinimized" of front window of p to false
-end tell`, pid)
-	_, err := exec.Command("osascript", "-e", script).CombinedOutput()
-	return err
+	return runWindowScript(pid, windowID, `set value of attribute "AXMinimized" of targetWindow to false`)
 }
 
 func SetFullScreen(pid int32, windowID uint32, fullscreen bool) error {
@@ -197,13 +190,7 @@ func SetFullScreen(pid int32, windowID uint32, fullscreen bool) error {
 	if fullscreen {
 		value = "true"
 	}
-	script := fmt.Sprintf(`tell application "System Events"
-set p to first application process whose unix id is %d
-if (count of windows of p) is 0 then return
-set value of attribute "AXFullScreen" of front window of p to %s
-end tell`, pid, value)
-	_, err := exec.Command("osascript", "-e", script).CombinedOutput()
-	return err
+	return runWindowScript(pid, windowID, fmt.Sprintf(`set value of attribute "AXFullScreen" of targetWindow to %s`, value))
 }
 
 func ActivateApp(bundleID string) error {
